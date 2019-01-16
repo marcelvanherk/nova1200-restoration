@@ -79,9 +79,9 @@ void WriteReg(int n, int value) {
   value=~value;				// negate value to make active high
 #else
   if (n==10)
-    value=~value;			// negate value to make active high
+    value^=7;        // reverse polarity of enregsw
   else
-    value^=7;				// reverse polarity of enregsw
+    value=~value;      // negate value to make active high
 #endif
 
   digitalWrite(2, value&1);		// output 4bit data
@@ -177,9 +177,9 @@ int largescreen=0;
 
 void setup() {
 #ifdef CONTROLSWITCHES
-  largescreen = 1;
-#else
   largescreen = EEPROM.read(0);
+#else
+  largescreen = 1;
 #endif
 
   for (int i=2; i<=11; i++) 
