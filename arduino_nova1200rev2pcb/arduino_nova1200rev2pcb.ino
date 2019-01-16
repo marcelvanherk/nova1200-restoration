@@ -167,11 +167,11 @@ unsigned int readAddr()
 }
 
 #ifdef CONTROLSWITCHES
-LiquidCrystal lcd (6, 12, A2, A3, A4, A5); // nova1200rev2
-LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
-#else
 LiquidCrystal lcd (6, 12, A4, A5, A2, A3);
 LiquidCrystal lcd2(6, 13, A4, A5, A2, A3); // hand wired board
+#else
+LiquidCrystal lcd (6, 12, A2, A3, A4, A5); // nova1200rev2
+LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #endif
 int largescreen=0;
 
