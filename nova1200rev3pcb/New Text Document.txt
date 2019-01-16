@@ -1,0 +1,10 @@
+Holes of nova connector too small, must be 0.82 mm + some extra; made 1mm
+Holes of arduino connector too small
+footprints of ttl IC's are too wide, must use narrower
+leds of d2 and d3 reversed, as wel as resistors; done
+exec and defer swapped on j1; done
+polarity of enswrg is reversed compared to manual board
+make board shorter to fit in gap?
+fix screws positions of LCD and keyboard
+make resistor footprints bit longer
+ 

@@ -1,0 +1,129 @@
+ds0 .. ds5 <-- 320 input channels
+i0 .. i2       (11 lines)
+ib .. id   
+
+I0 or I1 or I2 or IB or ID --> CE, address mux
+IB or ID --> enable buffer to busy/done
+I0 or I1 or I2 --> enable buffer to data
+
+ds0 .. ds5 --> 192 output channels
+o0 .. o2       (9 lines)
+O0 or O1 or 02 --> WE, enable input buffer
+iostrt, clr, reset, pulse --> enable pulse buffer, WE
+
+16 bits input buffer
+16 bits output buffer
+4 x 2k static ram cy7c128a
+12 bits address mux
+
+16 bits address register 11 address, A11, RD, WR
+16 bits write data register
+16 bits read mux
+-------
+12 registers
+
+[[d0..d3
+  a0..a3
+  pulse]]
+
+use pulse to trigger interrupt
+
+----- logic: -------
+iopls --> inv --> ff
+clr --> inv --> ff --> intr
+
+or extend to and and the to intr signals
+strt --> inv --> ff
+clr --> inv --> ff --> intr
+
+---- possible instructions to trigger interrupt ----
+interrupt can read instruction to determine action
+DOxPr nn
+DIxPr nn
+NIOPt nn (bits at AC are ignored)
+(DOxSr nn)
+(DIxSr nn)
+
+---- debug I uses -----
+SKPBZ TT0    4 skip TTO 
+SKPDZ TT0
+SKPDN TTI    1 skip TTI (4 types) --> DOAPt TTI+32
+DIACr TTI     1 IO TTI (4 registers) --> DIAPr TTI
+DOASr TTO     1 IO TTO (4 registers) --> DOAPr TTO
+SKPBZ TT0     1 skip TTO (4 types)   --> DOAPt TT0+32
+
+--- for each emulated IO device need 4 IO locations ---
+I/O  function DIxfr/DOxfr DOxPr / DIxPr (pass function in high bits dev)
+NIO function  NIOf        NIOP (pass function in high bits dev)
+skip condition SKPcc      NIOP+02000 (pass condition in high bits dev)
+(unused)                  NIOP+04000
+(unused)                  NIOP+06000
+
+note: if also STRT is used need only 1 high bit of dev, otherwise 2
+
+-- Test program ---
+0 --> return address
+1 --> 4
+4 NIOC0 1
+5 INTEN
+6 JMP @0
+
+20 INTEN
+21 DOAP0 xx
+22 JMP 21
+
+
+
+
+-- wiring IO plug, can add hardware there (1 74ls00)
+A gnd
+B +5
+C MSK0
+D INTA
+E DATAIB
+F DATAIA
+H DS3
+J DATOC
+K CLR
+L STRT
+M DATAIC
+N DATAOB
+P DATAOA
+R DCHA
+S DS4
+T DS5
+U DS2
+V DS1
+W IORST
+X DS0
+Y iopls
+Z SELD
+a SELB
+b DHCP I/O
+c INTP I/O
+d DCHM0
+e DCHM1
+f intr*
+h DCHO
+j DCHR
+k DCHI
+l OVFLO
+m RQENB
+n DATA7
+p DATA14
+r DATA5
+s DATA11
+t DATA12
+u DATA8
+v DATA4
+w DATA0
+x DATA9
+y DATA13
+z DATA1
+AA DATA15
+AB DATA3
+AC DATA10
+AD DATA2
+AE DATA6
+AF gnd 
+
