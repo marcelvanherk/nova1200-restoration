@@ -33,6 +33,7 @@
 //		Changed order of keypad pinout
 //		Made CONTROLSWITCHES conditional
 //		Add tests to keypad mode 6
+// mvh 20190117 Proper return from tests
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -931,7 +932,7 @@ void tests(int func)
   }
 
   // small memory test, address 0 only
-  else if (func==4) // 5th switch up (1st down?)
+  else if (func==4) // 5th switch up
   { stopNova();
     lcd.setCursor(0,1);
     lcd.print("     mt2 active");
@@ -1419,6 +1420,11 @@ void loop() {
     { int kb=kbkey;
       if (kb==11) kb=0;
       tests(kb);
+      lcd.clear();
+      kbmode = 0;
+      opmode = 0;
+      printHelp("");
+      lcd.noCursor();
     }
     else if (kbkey>0) 			// unrecognised key
     { kbmode=0;
