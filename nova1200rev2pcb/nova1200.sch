@@ -12,7 +12,7 @@ Comp "Marcel van Herk"
 Comment1 "Add pinheader for data switches"
 Comment2 "Add pinheader for control switches"
 Comment3 "Idea: add extra register on SEL7"
-Comment4 ""
+Comment4 "Swapped EXEC and DEFER"
 $EndDescr
 $Comp
 L 74xx:74LS257 U1
@@ -241,9 +241,9 @@ CARRY
 Text Label 1450 8800 0    50   ~ 0
 FETCH
 Text Label 1450 8900 0    50   ~ 0
-DEFER
-Text Label 1450 9000 0    50   ~ 0
 EXEC
+Text Label 1450 9000 0    50   ~ 0
+DEFER
 Text Notes 1500 7100 0    50   ~ 0
 vlamp
 NoConn ~ 7650 9100
