@@ -34,6 +34,7 @@
 //		Made CONTROLSWITCHES conditional
 //		Add tests to keypad mode 6
 // mvh 20190117 Proper return from tests
+// mvh 20190120 Accelerated register read and write; added read test to tests(0)
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -75,7 +76,7 @@ board 2
 // 11 8 = STOP*
 */
 
-void WriteReg(int n, int value) {
+void WriteReg(byte n, byte value) {
 #ifdef CONTROLSWITCHES
   value=~value;				// negate value to make active high
 #else
@@ -85,13 +86,14 @@ void WriteReg(int n, int value) {
     value=~value;      // negate value to make active high
 #endif
 
-  digitalWrite(2, value&1);		// output 4bit data
+  /*digitalWrite(2, value&1);		// output 4bit data
   digitalWrite(3, (value>>1)&1);
   digitalWrite(4, (value>>2)&1);
   digitalWrite(5, (value>>3)&1);
   
   digitalWrite(6, n&1);			// output 4bits address (3 bits used)
   digitalWrite(7, (n>>1)&1);
+
   digitalWrite(10, (n>>2)&1);
   digitalWrite(11, 0); // A0'
 
@@ -104,6 +106,18 @@ void WriteReg(int n, int value) {
     digitalWrite(8, 1);
     digitalWrite(8, 0);
     digitalWrite(8, 1);
+  }*/
+
+  PORTD = (PORTD&3)|((value&15)<<2)|((n&3)<<6);
+  byte s=(PORTB&0xF0)|(n&4);
+  PORTB = s|3; 
+  if (n&8)
+  { PORTB = s|1;
+    PORTB = s|3; 
+  }
+  else
+  { PORTB = s|2;
+    PORTB = s|3; 
   }
 }
 
@@ -121,9 +135,9 @@ void writeInst(int i)			// set instruction register
   WriteReg(15, (i>>12)&15);  // data H brd2
 }
 
-unsigned int readReg(int n) {
+unsigned int readReg(byte n) {
   int res;
-  pinMode(2, INPUT);		// change bus to input
+  /* pinMode(2, INPUT);		// change bus to input
   pinMode(3, INPUT);
   pinMode(4, INPUT);
   pinMode(5, INPUT);
@@ -132,6 +146,7 @@ unsigned int readReg(int n) {
   digitalWrite(7, (n>>1)&1);
   digitalWrite(10, (n>>2)&1);
   digitalWrite(11, (n>>4)&1); // A0'
+
   digitalWrite(8, 1);
   digitalWrite(9, 1);		// make sure all boards are disabled
 
@@ -148,10 +163,30 @@ unsigned int readReg(int n) {
     digitalWrite(8, 1);
   }
 
-  pinMode(2, OUTPUT);		// back to output
+  pinMode(2, OUTPUT);    // back to output
   pinMode(3, OUTPUT);
   pinMode(4, OUTPUT);
   pinMode(5, OUTPUT);
+  */
+
+  DDRD &= 0xc3;
+  PORTD = (PORTD&0x3f)|((n&3)<<6);
+  byte s=(PORTB&0xF0)|(n&0x04)|((n>>1)&0x08);
+  PORTB = s|3;
+  if (n&8)
+  { PORTB = s|1;
+    delayMicroseconds(2);
+    res = ((PIND>>2)&0x0f)^0x0f;
+    PORTB = s|3; 
+  }
+  else
+  { PORTB = s|2;
+    delayMicroseconds(2);
+    res = ((PIND>>2)&0x0f)^0x0f;
+    PORTB = s|3; 
+  }
+  DDRD |= 0x3c;
+  
   return res;
 }
 
@@ -783,7 +818,7 @@ void serialDebug(int mode) {
 
 ////////////////////////////////////////////////////
 // output debug info for arduino interface to serial port
-void debugPrint(int a0, int a1, int inst, int func, unsigned int addr, unsigned int data) {
+/*void debugPrint(int a0, int a1, int inst, int func, unsigned int addr, unsigned int data) {
   Serial.print("a0: ");
   Serial.print(a0);
   Serial.print(" a1: ");
@@ -797,6 +832,7 @@ void debugPrint(int a0, int a1, int inst, int func, unsigned int addr, unsigned 
   Serial.print(" Data=");
   Serial.println(data, HEX);
 }
+*/
 
 ////////////////////////////////////////////////////
 // scan 4x3 keyboard array using 4 digital and one analog line
@@ -881,7 +917,9 @@ void tests(int func)
       writeInst(1<<(count&15));
       WriteReg(10, count);
       WriteReg(11, count/16);
-    
+
+      // test that read data gives back instruction (only if hand enabled)
+      digitalWrite(13, readData()!=(1<<(count&15)));
       delay(100);
       //debugPrint(a0, a1, 11, 11, readAddr(), readData()); 
     }
