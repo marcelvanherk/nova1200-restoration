@@ -28,13 +28,17 @@
 //              Force Nova stop when accessing kb functions and some key functions
 //              Todo: connect LCD3, solder mux to read 5 lights
 // mvh 20190116 Adapted for rev2 pcb
-//		Reversed polarity of bit 8 of register 10
-//		Changed order of LCD pinout
-//		Changed order of keypad pinout
-//		Made CONTROLSWITCHES conditional
-//		Add tests to keypad mode 6
+//              Reversed polarity of bit 8 of register 10
+//              Changed order of LCD pinout
+//              Changed order of keypad pinout
+//              Made CONTROLSWITCHES conditional
+//              Add tests to keypad mode 6
 // mvh 20190117 Proper return from tests
 // mvh 20190120 Accelerated register read and write; added read test to tests(0)
+// mvh 20190126 Reduced writeinst to 8bit; use data to test for equality in tests(0); 115200 Baud
+//              Added readLights, show in regtst and with X2
+//              Note: 8K dump with serial ~6s without serial < 1s
+//              Added test mode 5: generate interrupt (requires wire from SEL7 to pin B29 on backplane)
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -128,11 +132,11 @@ void writeData(int d)			// set data register
   WriteReg(9, (d>>12)&15);  // data H brd2
 }
 
-void writeInst(int i)			// set instruction register
-{ WriteReg(2, i&15);        // data L
-  WriteReg(3, (i>>4)&15);   // data H
-  WriteReg(14, (i>>8)&15);   // data L brd2
-  WriteReg(15, (i>>12)&15);  // data H brd2
+void writeInst(int i)			// set instruction register (only 8 MSB bits used)
+{ //WriteReg(2, i&15);        // data L
+  //WriteReg(3, (i>>4)&15);   // data H
+  WriteReg(14, i&15);   // data L brd2
+  WriteReg(15, (i>>4)&15);  // data H brd2
 }
 
 unsigned int readReg(byte n) {
@@ -202,6 +206,12 @@ unsigned int readAddr()
   return a;
 }
 
+// read status lights & aux inputs
+unsigned int readLights()
+{ unsigned int a = (readReg(22)<<4)+readReg(6);
+  return a;
+}
+
 #ifdef CONTROLSWITCHES
 LiquidCrystal lcd (6, 12, A4, A5, A2, A3);
 LiquidCrystal lcd2(6, 13, A4, A5, A2, A3); // hand wired board
@@ -224,8 +234,10 @@ void setup() {
   digitalWrite(9, 1); 		// disable both board enables
   digitalWrite(8, 1);
 
+#ifdef CONTROLSWITCHES
   pinMode(A0, INPUT); 		// control switches are connected via register network to 2 analog inputs 
   pinMode(A1, INPUT);
+#endif
 
   WriteReg(10, 8);   		// disable all ctl signals, set switch mode
   WriteReg(11, 0);
@@ -240,16 +252,20 @@ void setup() {
   lcd2.print(F("DATA GENERAL CORPORATION       NOVA 1210"));
   printHelp(F("This computer was manufactured in 1971"));
 
-  Serial.begin(19200); 		// usb serial for debug output
+  Serial.begin(115200); 		// usb serial for debug output
+}
+
+void wait(void) {
+  delayMicroseconds(2);
 }
 
 // read nova accumulator 0..3
 unsigned int examineAC(int address) {
-  writeInst((0x67<<8)+(address<<11));
+  writeInst(0x67+(address<<3));
   WriteReg(11, 4);
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);
-  delayMicroseconds(10);
+  wait();
   int v = readData();
   return v;
 }
@@ -258,27 +274,27 @@ unsigned int examineAC(int address) {
 unsigned int examine(int address) {
   if (address>=0xfffc)
     return examineAC(address-0xfffc);
-  writeInst(0xf9<<8);
+  writeInst(0xf9);
   writeData(address);
   WriteReg(10, 0);	// connect data register to bus
   WriteReg(11, 4);	// pulse CONREQ
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);	// revert to idle state
   WriteReg(10, 8);
-  delayMicroseconds(10);
+  wait();
   int v = readData();	// read lights
   return v;
 }
 
 // write single word to nova accumulator
 void depositAC(unsigned int address, unsigned int value) {
-  writeInst((0x23<<8)+(address<<11));
+  writeInst(0x23+(address<<3));
   writeData(value);
   WriteReg(10, 0);
   WriteReg(11, 4);
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);
-  delayMicroseconds(10);
+  wait();
   WriteReg(10, 8);
 }
 
@@ -288,45 +304,54 @@ void deposit(unsigned int address, unsigned int value) {
   { depositAC(address-0xfffc, value);
     return;
   }
-  writeInst(0xf9<<8);
+  writeInst(0xf9);
   writeData(address);
   WriteReg(10, 0);
   WriteReg(11, 4);
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);
-  delayMicroseconds(10);
-  writeInst(0xdd<<8);
+  wait();
+  writeInst(0xdd);
   writeData(value);
   WriteReg(11, 4);
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);
-  delayMicroseconds(10);
+  wait();
   WriteReg(10, 8);
 }
 
 unsigned int stopNova(void)
 { WriteReg(11, 8);
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);
-  delayMicroseconds(10);
+  wait();
   return readAddr();
 }
 
+unsigned int interruptNova(void)
+{ PORTD = (PORTD&3)|(3<<6); // io channel 7
+  byte s=(PORTB&0xF0)|(4);
+  PORTB = s|3;
+  PORTB = s|2;
+  delayMicroseconds(10); 
+  PORTB = s|3; 
+}
+
 void continueNova(void)
-{ writeInst(0xff<<8);
+{ writeInst(0xff);
   WriteReg(11, 4);
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);
-  delayMicroseconds(10);
+  wait();
 }              
 
 void startNova(unsigned int a)
 { writeData(a);
-  writeInst(0xfe<<8);
+  writeInst(0xfe);
   WriteReg(11, 4);
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);
-  delayMicroseconds(10);
+  wait();
 }              
 
 ////////////////////////////////////////////////////
@@ -912,14 +937,15 @@ void tests(int func)
   { for(int count=0; count<65536; count++)
     { lcd.setCursor(0,1);
       lcdPrintOctal(count);
-      lcd.print("  reg test");
+      lcd.print("  reg test ");
+      lcdPrintOctal(readLights());
       writeData(32768>>(count&15));
       writeInst(1<<(count&15));
-      WriteReg(10, count);
+      WriteReg(10, (count&7)); // keep connected to reg
       WriteReg(11, count/16);
 
-      // test that read data gives back instruction (only if hand enabled)
-      digitalWrite(13, readData()!=(1<<(count&15)));
+      // test that read data gives back data (only if hand enabled)
+      digitalWrite(13, readData()!=(32768>>(count&15)));
       delay(100);
       //debugPrint(a0, a1, 11, 11, readAddr(), readData()); 
     }
@@ -980,11 +1006,18 @@ void tests(int func)
     lcd.setCursor(0,1);
     lcd.print("mt2 ready      ");
   }
+  else if (func==5) // Cause interrupt
+  { interruptNova();
+    lcd.setCursor(0,1);
+    lcd.print("sent interrupt pulse");
+    delay(200);
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////
 // table for control keys on MSB board
 //                    dep0,  dep1, dep2, dep3, exa0, exa1, exa2, exa3, reset, stop
+#ifdef CONTROLSWITCHES
 short highvals[10] = {505,  405,  305,  205,   602, 723,  804,  950, 104, 1023}; 
 short highinst[10] = {0x23, 0x2B, 0x33, 0x3B, 0x67, 0x6F, 0x77, 0x7F, 0x23, 0x00}; 
 short highfuncs[10] = {1,    1,   1,    1,    1,     1,     1,   1,   2,   3};          
@@ -996,10 +1029,10 @@ short lowvals[10]  = {448, 560,   338, 672,    227,  784,   118,    950,    3276
 short lowinst[10]  = {0xfb, 0xff, 0xdd, 0xdc,  0xf9, 0xfc,  0xff,   0xff,    0,   0xfd}; 
 short lowfuncs[10] = {1,   1,    1,    1,     1,       1,  21,     22,      0,    7};    
                      //4,5,6,7= N/A memstep instep pl, +16 generate con+ signal
+#endif
 
 const long interval = 1;            // interval at which to process (milliseconds)
 int debugging=0;                    // set after single instruction step
-int count=0;                        // only used for running lights register test
 int keyon = 0;                      // set when key is down
 unsigned long previousMillis = 0;   // will store last time LED was updated
 unsigned long keydownMillis = 0;    // will store time frontpanel key was pressed
@@ -1010,7 +1043,7 @@ unsigned long octalval;             // currently entered octal data
 unsigned int octaladdress;          // last used octal address from keypad/front panel
 unsigned int prevpc=0;              // used when stepping back in debugging
 unsigned int opmode=0;              // opmode, set with key 9
-                                    // 0=examine 1=decimal 2=asm 3=debug 4=setup 5=io
+                                    // 0=examine 1=decimal 2=asm 3=debug 4=setup 5=io 6=test
 bool SerialIO=false;                // if set serial is sent/recieved to Nova
 
 // -------------------- keyboard interface description ---------------------
@@ -1041,7 +1074,7 @@ bool SerialIO=false;                // if set serial is sent/recieved to Nova
 // 8 step back; move to previous instruction
 
 // setup mode
-// 0..5 sets mode
+// 0..6 sets mode
 
 // IO mode: 9 (long) enters setup mode
 // any character on keypad is written to Nova location 010
@@ -1569,7 +1602,6 @@ void loop() {
         if (!debugging) lcd.print(makespc(24));
       }
     }
-    count++;
 
     // auto repeat all functions after 1 second
     if (func!=0 && millis()-keydownMillis > 1000)
@@ -1653,7 +1685,7 @@ void loop() {
         case 'X': Serial.readBytes(m, 1); 
                   if (m[0]=='0') Serial.println(toHex(readData())); 
                   if (m[0]=='1') Serial.println(toHex(readAddr())); 
-                  if (m[0]=='2') Serial.println(toHex(0/*readLights()*/)); 
+                  if (m[0]=='2') Serial.println(toHex(readLights())); 
                   break;
         case 'P': Serial.readBytes(m, 6); 
                   func=33; inst=makehex(m)>>8; 
@@ -1711,7 +1743,7 @@ void loop() {
         case '/': SerialIO=true;
                   Serial.println("IO mode; @=exit");
                   break;
-        case 'V': Serial.println("Arduino code Marcel van Herk 20170829");
+        case 'V': Serial.println("Arduino code Marcel van Herk 20190126");
                   break;
       }
     }
@@ -1722,7 +1754,7 @@ void loop() {
 
       lcd.setCursor(0,1);
 
-      writeInst(inst<<8);	// set instruction register on Nova
+      writeInst(inst);	// set instruction register on Nova
   
       int pulselen=1;
 
