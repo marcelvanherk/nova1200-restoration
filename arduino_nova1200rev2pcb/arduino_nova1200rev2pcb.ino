@@ -1125,6 +1125,7 @@ bool SerialIO=false;                // if set serial is sent/recieved to Nova
 //
 // S              Stop
 // O              Continue
+// ossss          Continue passing s as switches value (experimental)
 // I              Instruction step
 // Y              Memory step
 // T              Reset
@@ -1469,6 +1470,7 @@ void loop() {
       octalval=0;
       lcd.noCursor();
     }
+#define CHARIN 8
 #define CHAROUT 10
     else if (opmode==5 && kbkey>0)  // io mode
     { bool runlight = (readLights()&1)!=0;
