@@ -1,4 +1,3 @@
-// nova control panel arduino controller
 // mvh 20170801 added lcd display
 // mvh 20170802 show all keys on lcd; show test hints and progress
 // mvh 20170803 mini debugger shows on instruction step
@@ -39,6 +38,7 @@
 //              Added readLights, show in regtst and with X2
 //              Note: 8K dump with serial ~6s without serial < 1s
 //              Added test mode 5: generate interrupt (requires wire from SEL7 to pin B29 on backplane)
+// mvh 20190127 Start on interrupt; Use data register to emulate switches; I/O mode output also on switches
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -84,8 +84,10 @@ void WriteReg(byte n, byte value) {
 #ifdef CONTROLSWITCHES
   value=~value;				// negate value to make active high
 #else
-  if (n==10)
+  if (n==10) {
     value^=7;        // reverse polarity of enregsw
+    value&=7;        // force switches off (to allow switch emulation)
+  }
   else
     value=~value;      // negate value to make active high
 #endif
@@ -207,6 +209,12 @@ unsigned int readAddr()
 }
 
 // read status lights & aux inputs
+// 1=RUN
+// 2=FETCH
+// 4=EXEC
+// 8=AUX
+// 16=ION
+// 32=DEFER
 unsigned int readLights()
 { unsigned int a = (readReg(22)<<4)+readReg(6);
   return a;
@@ -259,6 +267,8 @@ void wait(void) {
   delayMicroseconds(2);
 }
 
+unsigned int CurrentSwitchValue=0;
+
 // read nova accumulator 0..3
 unsigned int examineAC(int address) {
   writeInst(0x67+(address<<3));
@@ -283,6 +293,7 @@ unsigned int examine(int address) {
   WriteReg(10, 8);
   wait();
   int v = readData();	// read lights
+  writeData(CurrentSwitchValue);
   return v;
 }
 
@@ -296,6 +307,7 @@ void depositAC(unsigned int address, unsigned int value) {
   WriteReg(11, 0);
   wait();
   WriteReg(10, 8);
+  writeData(CurrentSwitchValue);
 }
 
 // write single word to nova memory or accumulator
@@ -318,6 +330,7 @@ void deposit(unsigned int address, unsigned int value) {
   WriteReg(11, 0);
   wait();
   WriteReg(10, 8);
+  writeData(CurrentSwitchValue);
 }
 
 unsigned int stopNova(void)
@@ -328,8 +341,9 @@ unsigned int stopNova(void)
   return readAddr();
 }
 
+// experimental - assumes wire connected
 unsigned int interruptNova(void)
-{ PORTD = (PORTD&3)|(3<<6); // io channel 7
+{ PORTD = (PORTD&0x3f)|(3<<6); // io channel 7
   byte s=(PORTB&0xF0)|(4);
   PORTB = s|3;
   PORTB = s|2;
@@ -337,14 +351,30 @@ unsigned int interruptNova(void)
   PORTB = s|3; 
 }
 
+// continue
 void continueNova(void)
 { writeInst(0xff);
-  WriteReg(11, 4);
-  wait();
+  WriteReg(11, 6);
+  delayMicroseconds(10);
   WriteReg(11, 0);
   wait();
 }              
 
+// continue but pass value of sw to switch register (disabling hardware switches)
+void continueNovaSw(int sw)
+{ CurrentSwitchValue=sw;
+  writeData(CurrentSwitchValue);
+  WriteReg(10, 0);
+  delayMicroseconds(10);
+  writeInst(0xff);
+  WriteReg(11, 6);
+  delayMicroseconds(10);
+  WriteReg(11, 0);
+  wait();
+  WriteReg(10, 8);
+}              
+
+// start at address a
 void startNova(unsigned int a)
 { writeData(a);
   writeInst(0xfe);
@@ -352,6 +382,7 @@ void startNova(unsigned int a)
   wait();
   WriteReg(11, 0);
   wait();
+  writeData(CurrentSwitchValue);
 }              
 
 ////////////////////////////////////////////////////
@@ -1012,6 +1043,12 @@ void tests(int func)
     lcd.print("sent interrupt pulse");
     delay(200);
   }
+  else if (func==6) // Continue passing virtual switches
+  { continueNovaSw(0x6666);
+    lcd.setCursor(0,1);
+    lcd.print("sent sw value 6666 to READS instruction");
+    delay(200);
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -1081,7 +1118,7 @@ bool SerialIO=false;                // if set serial is sent/recieved to Nova
 // character written to Nova location 011 is displayed on LCD
     
 // test mode
-// 0..5 selects tests
+// 0..6 selects tests
 
 // ------------------------------------------------------------
 // Serial interface description
@@ -1091,6 +1128,7 @@ bool SerialIO=false;                // if set serial is sent/recieved to Nova
 // I              Instruction step
 // Y              Memory step
 // T              Reset
+// N              Interrupt (experimental)
 // Ghhhh          Start at address hhhh
 // Mhhhh          Read memory at address hhhh
 // Dhhhhhdddd     Deposit dddd at address hhhh
@@ -1431,25 +1469,36 @@ void loop() {
       octalval=0;
       lcd.noCursor();
     }
+#define CHAROUT 10
     else if (opmode==5 && kbkey>0)  // io mode
-    { unsigned int a, kb=kbkey;
-      for (int i=0; i<1000; i++) 
-      { a=stopNova();
-        if (examine(8)==0) break;
-        if (examine(9)) 
-        { Serial.write(examine(9));
-          lcd.write(examine(9));
-          deposit(9, 0);
+    { bool runlight = (readLights()&1)!=0;
+      unsigned int a, kb=kbkey;
+      if (runlight) a=stopNova();
+      /*for (int i=0; i<1000; i++) 
+      { if (runlight) a=stopNova();
+        if (examine(CHARIN)==0) break;
+        if (examine(CHAROUT)>2) 
+        { Serial.write(examine(CHAROUT));
+          lcd.write(examine(CHAROUT));
+          deposit(CHAROUT, 0);
         }
-        startNova(a);
-        delay(1);
+        if (runlight) 
+        { startNova(a);
+          delay(1);
+        }
+        else
+          break;
       };
+      */
       if (kb==10) kb='*';
       else if (kb==11) kb='0';
       else if (kb==12) kb='#';
       else kb='0' + kb;
-      deposit(8, kb);
-      startNova(a);
+      deposit(CHARIN, kb);
+      if (runlight) 
+        startNova(a);
+      else 
+        continueNovaSw(kb);
     }
     else if (kbmode<3 && kbkey==9)      // select opmode
     { kbmode = 3;
@@ -1621,14 +1670,15 @@ void loop() {
     //////////////////////////////// serial IO ///////////////////////////
     unsigned int a=0;
     if (SerialIO or opmode==5)
-    { a=stopNova();
-      if (examine(9)) 
-      { Serial.write(examine(9));
+    { bool runlight = (readLights()&1)!=0;
+      if (runlight) a=stopNova();
+      if (examine(CHAROUT)>2) 
+      { Serial.write(examine(CHAROUT));
         if (opmode==5) 
-          lcd.write(examine(9));
-        deposit(9, 0);
+          lcd.write(examine(CHAROUT));
+        deposit(CHAROUT, 0);
       }
-      startNova(a);
+      if (runlight) startNova(a);
     }
 
     if (Serial.available())
@@ -1638,22 +1688,29 @@ void loop() {
       if (SerialIO or opmode==5) 
       { if (b=='@') 
         { SerialIO=false;
+          opmode=0;
           Serial.println("interactive mode");
         }
         else
-        { for (int i=0; i<1000; i++) 
-          { a=stopNova();
-            if (examine(8)==0) break;
-            if (examine(9)) 
-            { Serial.write(examine(9));
-              if (opmode==5) lcd.write(examine(9));
-              deposit(9, 0);
+        { bool runlight = (readLights()&1)!=0;
+          for (int i=0; i<1000; i++) 
+          { if (runlight) a=stopNova();
+            if (examine(CHARIN)==0) break;
+            if (examine(CHAROUT)>2) 
+            { Serial.write(examine(CHAROUT));
+              if (opmode==5) lcd.write(examine(CHAROUT));
+              deposit(CHAROUT, 0);
             }
-            startNova(a);
-            delay(1);
+            if (runlight)
+            { startNova(a);
+              delay(1);
+            }
+            else
+              break;
           };
-          deposit(8, b);
-          startNova(a);
+          deposit(CHARIN, b);
+          if (runlight) startNova(a);
+          else continueNovaSw(b);
         }
       }
       else
@@ -1668,6 +1725,10 @@ void loop() {
         case 'I': func=22; inst=0; break;
         case 'Y': func=21; inst=0; break;
         case 'O': continueNova(); break;
+        case 'o': Serial.readBytes(m, 4);
+                  continueNovaSw(makehex(m)); 
+                  break;
+        case 'N': interruptNova(); break;
         case 'G': Serial.readBytes(m, 4);
                   startNova(makehex(m));
                   //func=33; inst=0xfb; 
