@@ -39,9 +39,104 @@
 //              Note: 8K dump with serial ~6s without serial < 1s
 //              Added test mode 5: generate interrupt (requires wire from SEL7 to pin B29 on backplane)
 // mvh 20190127 Start on interrupt; Use data register to emulate switches; I/O mode output also on switches
+// mvh 20190128 Fixed continue; address was modified by examine etc, reset with examine(a)
+//              Added mini-assembler and continueNovaSw() test program; to load key 9-6-7
+
+// very mini assembler for nova
+#define ISZ(a)    (010000+(a&0xff))
+#define DSZ(a)    (014000+(a&0xff))
+#define STA(d, a) (040000+(d<<11)+(a&0xff))
+#define LDA(d, a) (020000+(d<<11)+(a&0xff))
+#define JMP(a)    (000000+(a&0xff))
+#define JSR(a)    (040000+(a&0xff))
+#define COM(s, d) (0100000+(s<<13)+(d<<11))
+#define NEG(s, d) (0100400+(s<<13)+(d<<11))
+#define MOV(s, d) (0101000+(s<<13)+(d<<11))
+#define INC(s, d) (0101400+(s<<13)+(d<<11))
+#define ADDC(s, d)(0102000+(s<<13)+(d<<11)) // clashes with ADC
+#define SUB(s, d) (0102400+(s<<13)+(d<<11))
+#define ADD(s, d) (0103000+(s<<13)+(d<<11))
+#define AND(s, d) (0103400+(s<<13)+(d<<11))
+#define HALT       063077
+#define INTEN      060177
+#define INTDS      060277
+#define READS(d)  (060477+(d<<11))
+#define SKIP      (MOV(0,0)+CZ+SZC) // for bit 2 broken
+
+// relative addressing for a, e.g. STA(0, 10)+AC2 or STA(0, 10)+IND
+#define PC  00400
+#define AC2 01000
+#define AC3 01400
+#define IND 02000
+
+// carry for with arithmetic instructions e.g. ADD(0,0)+CO
+#define CZ 020
+#define CO 040
+#define CC 060
+
+// shift for with arithmetic instructions e.g. ADD(0,0)+SL
+#define SL 0100
+#define SR 0200
+#define SS 0300
+
+// skip for with arithmetic instructions ADD(0,0)+SKP
+#define SKP 1
+#define SZC 2
+#define SNC 3
+#define SZR 4
+#define SNR 5
+#define SEZ 6
+#define SBN 7
+
+// noload for with arithmetic instructions ADD(0,0)+NOLOAD
+#define NOLOAD 010
+
+#define CONSTANT(a) ((a)&0xffff)
+
+#define END 063777 // rarely used instruction
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
+
+// memory mapped I/O
+#define CHARIN 0x20   // input to nova
+#define CHAROUT 0x22  // output from nova
+
+// test program for switch based input
+unsigned short prog1[]={
+  JMP(2),
+  JMP(2),
+  INC(1,1),        // keep track if loop and halt works
+  HALT,
+  READS(0),        // read input daat from switches
+  INC(1,1),        // keep track if loop and halt works
+  STA(0, CHAROUT), // echo to arduino
+  INTEN,           // ION light ON
+
+  LDA(2, 2)+PC,    // delay: load constant
+  SKIP,            // skip constant
+  CONSTANT(0),
+  INC(2,2)+SNC,    // loop 65535 times
+  JMP(-1)+PC,
+  INTDS,           // ION light OFF
+  
+  LDA(2, 2)+PC,    // delay
+  SKIP,
+  CONSTANT(0),
+  INC(2,2)+SNC,
+  JMP(-1)+PC,
+  INTEN,          // ION light ON
+  
+  LDA(2, 2)+PC,   // delay
+  SKIP,
+  CONSTANT(0),
+  INC(2,2)+SNC,
+  JMP(-1)+PC,
+  INTDS,          // ION light OFF
+
+  JMP(2),
+  END
+};
 
 /* list of interface registers (4 bits)
 
@@ -352,8 +447,9 @@ unsigned int interruptNova(void)
 }
 
 // continue
+// note: examine and deposit affect continue address
 void continueNova(void)
-{ writeInst(0xff);
+{ writeInst(0xfb);
   WriteReg(11, 6);
   delayMicroseconds(10);
   WriteReg(11, 0);
@@ -361,14 +457,15 @@ void continueNova(void)
 }              
 
 // continue but pass value of sw to switch register (disabling hardware switches)
+// note: examine and deposit affect continue address, restore it by a=readAddr() .... examine(a); continueNovaSw(int sw)
 void continueNovaSw(int sw)
 { CurrentSwitchValue=sw;
   writeData(CurrentSwitchValue);
   WriteReg(10, 0);
-  delayMicroseconds(10);
-  writeInst(0xff);
+  wait();
+  writeInst(0xfb);
   WriteReg(11, 6);
-  delayMicroseconds(10);
+  wait();
   WriteReg(11, 0);
   wait();
   WriteReg(10, 8);
@@ -377,7 +474,7 @@ void continueNovaSw(int sw)
 // start at address a
 void startNova(unsigned int a)
 { writeData(a);
-  writeInst(0xfe);
+  writeInst(0xfb);
   WriteReg(11, 4);
   wait();
   WriteReg(11, 0);
@@ -1049,6 +1146,19 @@ void tests(int func)
     lcd.print("sent sw value 6666 to READS instruction");
     delay(200);
   }
+  else if (func==7) // Copy prog1 to NOVA
+  { stopNova();
+    int i=0, a=0;
+    do
+    { a=prog1[i];
+      deposit(i, a);
+      i++;
+    }
+    while (a!=END);
+    lcd.setCursor(0,1);
+    lcd.print("loaded test program prog1");
+    delay(200);
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -1470,12 +1580,11 @@ void loop() {
       octalval=0;
       lcd.noCursor();
     }
-#define CHARIN 8
-#define CHAROUT 10
     else if (opmode==5 && kbkey>0)  // io mode
     { bool runlight = (readLights()&1)!=0;
       unsigned int a, kb=kbkey;
       if (runlight) a=stopNova();
+      else a = readAddr();
       /*for (int i=0; i<1000; i++) 
       { if (runlight) a=stopNova();
         if (examine(CHARIN)==0) break;
@@ -1500,7 +1609,9 @@ void loop() {
       if (runlight) 
         startNova(a);
       else 
+      { examine(a);
         continueNovaSw(kb);
+      }
     }
     else if (kbmode<3 && kbkey==9)      // select opmode
     { kbmode = 3;
@@ -1674,6 +1785,7 @@ void loop() {
     if (SerialIO or opmode==5)
     { bool runlight = (readLights()&1)!=0;
       if (runlight) a=stopNova();
+      else a=readAddr();
       if (examine(CHAROUT)>2) 
       { Serial.write(examine(CHAROUT));
         if (opmode==5) 
@@ -1681,6 +1793,7 @@ void loop() {
         deposit(CHAROUT, 0);
       }
       if (runlight) startNova(a);
+      else examine(a);
     }
 
     if (Serial.available())
@@ -1712,7 +1825,10 @@ void loop() {
           };
           deposit(CHARIN, b);
           if (runlight) startNova(a);
-          else continueNovaSw(b);
+          else 
+          { examine(a&0x7fff);
+            continueNovaSw(b);
+          }
         }
       }
       else
