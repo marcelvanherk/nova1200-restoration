@@ -44,10 +44,14 @@
 // mvh 20190201 Added LABEL and JMPL and JSRL to assembler; made it a clean routine
 //              Assumes large screen only; started on special instructions
 // mvh 20190201 WIP: Serial output misses characters
-
+// mvh 20190202 Fixed serial; wait up to 100 ms for halt, defined and disassemble system calls
+//              added WRITELED system call (note messes with lcd2)
+//              Added internal/external EEPROM code for READBLOCK and WRITEBLOCK
+//              Started on READBLOCK and WRITEBLOCK and their test programs
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
+#include <Wire.h>  
 
 #ifdef CONTROLSWITCHES
 LiquidCrystal lcd (6, 12, A4, A5, A2, A3);
@@ -119,27 +123,37 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #define CHARIN 040   // input to nova
 #define CHAROUT 042  // output from nova
 
+// System calls (these all are functional HALT instructions, interpreted by Arduino program)
+#define INFO       077377 // show information (A0 A1 for now) on LCD
+#define PUTC       077277 // output character to LCD and serial
+#define GETC       077177 // get character from serial (/ mode) or keypad (9-5 mode)
+#define READBLOCK  077077 // read 64 word block A0 to address A2
+#define WRITEBLOCK 073377 // write 64 word block A0 from address A2
+#define WRITELED   073277 // A0 bit 0 sets Arduino LED
+
 // test assembly program for switch based input
 unsigned short prog1[]={
   JMP(2),
   JMP(2),
   LABEL(0),
   INC(1,1),        // keep track if loop and halt works
-  HALT,
-  READS(0),        // read input data from switches
+  //HALT,
+  //READS(0),        // read input data from switches
+  GETC,
   INC(1,1),        // keep track if loop and halt works
   // STA(0, CHAROUT), // echo to arduino
   INTEN,           // ION light ON
+  //WRITELED,
 
-  /*LDA(2, 2)+PC,    // delay: load constant
+  LDA(2, 2)+PC,    // delay: load constant
   SKIP,            // skip constant
-  CONSTANT(65530),
+  CONSTANT(65532),
   INC(2,2)+SNC,    // loop 65535 times
-  JMP(-1)+PC,0123456789
+  JMP(-1)+PC,
   INTDS,           // ION light OFF
-  */
   
-  CONSTANT(077277), // print A0 on LCD
+  PUTC,           // print A0 on LCD
+  //HALT,
 
   /*
   // CONSTANT(077377), // displays A0 and A1 on LCD
@@ -160,6 +174,24 @@ unsigned short prog1[]={
   INTDS,          // ION light OFF
 
   JMPL(0),
+  END
+};
+
+unsigned short prog2[]={
+  SUB(0, 0),
+  SUB(2, 2),
+  WRITEBLOCK,
+  HALT,
+  END
+};
+
+unsigned short prog3[]={
+  SUB(0, 0),
+  LDA(2, 2)+PC,    
+  SKIP,
+  CONSTANT(0100),
+  READBLOCK,
+  HALT,
   END
 };
 
@@ -313,7 +345,7 @@ void setup() {
   lcd2.print(F("DATA GENERAL CORPORATION       NOVA 1210"));
   printHelp(F("This computer was manufactured in 1971"));
 
-  Serial.begin(19200);     // usb serial for debug output
+  Serial.begin(115200);     // usb serial for debug output
 }
 
 void writeData(int d)			// set data register
@@ -698,9 +730,18 @@ String lcdPrintDisas(unsigned int v, int octalmode) {
   unsigned int mref = (v>>11)&0x1f;
   unsigned int opcode = (v>>8)&0x7;
 
+  // system calls
+       if (v==GETC)             s+=(".GETC");  
+  else if (v==PUTC)             s+=(".PUTC");  
+  else if (v==INFO)             s+=(".INFO");  
+  else if (v==WRITELED)         s+=(".WRITELED");
+  else if (v==READBLOCK)        s+=(".READBLOCK");
+  else if (v==WRITEBLOCK)       s+=(".WRITEBLOCK");
+  else if (v==HALT)             s+=("HALT");    //doc0, 4 bits free
+  else if ((v&0xe73f)==0x663f)  s+=(".HALT");   // unused system call
+
   // cpu control instructions
-  if      ((v&0xff3f)==0x653f)  s+=("IORST"); //dicc0
-  else if ((v&0xe73f)==0x663f)  s+=("HALT");  //doc0, 4 bits free
+  else if ((v&0xff3f)==0x653f)  s+=("IORST"); //dicc0
   else if ((v&0xe73f)==0x613f) {s+=("READS");s+=String(mref&3);}//dia#
   else if (v==0x607f) s+=("INTEN"); // nios0
   else if (v==0x60bf) s+=("INTDS"); // nioc0
@@ -1169,11 +1210,13 @@ void tests(int func)
     lcd.print("sent 6666 to READS");
     delay(200);
   }
-  else if (func==7) // Copy prog1 to NOVA
+  else if (func==7) // Copy prog1/2/3 to NOVA
   { stopNova();
     assemble(0, prog1);
+    assemble(040, prog2);
+    assemble(050, prog3);
     lcd.setCursor(0,1);
-    lcd.print("loaded prog1");
+    lcd.print("loaded prog1/2/3");
     delay(200);
   }
 }
@@ -1538,8 +1581,15 @@ void processkey(short kbkey)
       if (runn) 
         startNova(a);
       else 
-      { examine(haltAddress&0x7fff);
-        continueNovaSw(kb);
+      { if (haltInstruction == GETC)
+        { depositAC(0, kb);
+          examine(haltAddress&0x7fff);
+          continueNova();
+        }
+        else
+        { examine(haltAddress&0x7fff);
+          continueNovaSw(kb);
+        }
       }
     }
     else if (kbmode<3 && kbkey==9)      // select opmode
@@ -1640,10 +1690,18 @@ int processSerial(int count)
         { bool runn = readLights()&1;
           if (runn) a=stopNova();
           deposit(CHARIN, b);
-          if (runn) startNova(a);
+          if (runn) 
+           startNova(a);
           else 
-          { examine(haltAddress&0x7fff);
-            continueNovaSw(b);
+          { if (haltInstruction == GETC)
+            { depositAC(0, b);
+              examine(haltAddress&0x7fff);
+              continueNova();
+            }
+            else
+            { examine(haltAddress&0x7fff);
+              continueNovaSw(b);
+            }
           }
         }
       }
@@ -1744,13 +1802,51 @@ int processSerial(int count)
                   lcd.print(makespc(40));
                   lcd.setCursor(0, 0);
                   break;
-        case 'V': Serial.println("Arduino code Marcel van Herk 20190201");
+        case 'V': Serial.println("Arduino code Marcel van Herk 20190202");
                   break;
       }
 
   }
 
   return func;
+}
+
+// adapted from I2C eeprom library from https://playground.arduino.cc/code/I2CEEPROM
+ 
+// WARNING: address is a page address, 6-bit end will wrap around
+// also, data can be maximum of about 30 bytes, because the Wire library has a buffer of 32 bytes
+void i2c_eeprom_write_page(int deviceaddress, unsigned int eeaddresspage, byte* data, byte length ) {
+    Wire.beginTransmission(deviceaddress);
+    Wire.write((int)(eeaddresspage >> 8)); // MSB
+    Wire.write((int)(eeaddresspage & 0xFF)); // LSB
+    byte c;
+    for ( c = 0; c < length; c++)
+        Wire.write(data[c]);
+    Wire.endTransmission();
+    delay(5);
+}
+
+// maybe let's not read more than 30 or 32 bytes at a time!
+void i2c_eeprom_read_buffer(int deviceaddress, unsigned int eeaddress, byte *buffer, int length ) {
+    Wire.beginTransmission(deviceaddress);
+    Wire.write((int)(eeaddress >> 8)); // MSB
+    Wire.write((int)(eeaddress & 0xFF)); // LSB
+    Wire.endTransmission();
+    Wire.requestFrom(deviceaddress,length);
+    int c = 0;
+    for ( c = 0; c < length; c++ )
+        if (Wire.available()) buffer[c] = Wire.read();
+}
+
+byte i2c_eeprom_read_byte( int deviceaddress, unsigned int eeaddress ) {
+    byte rdata = 0xFF;
+    Wire.beginTransmission(deviceaddress);
+    Wire.write((int)(eeaddress >> 8)); // MSB
+    Wire.write((int)(eeaddress & 0xFF)); // LSB
+    Wire.endTransmission();
+    Wire.requestFrom(deviceaddress,1);
+    if (Wire.available()) rdata = Wire.read();
+    return rdata;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -1776,34 +1872,141 @@ unsigned long previousMillis = 0;   // will store last time LED was updated
 unsigned long keydownMillis = 0;    // will store time frontpanel key was pressed
 unsigned long kbMillis = 0xfffffff; // will store time keypad key was pressed
 int kbkey=0;                        // detected key 1..12 on keypad
+int lcdpos=0;
+bool clearline=false;
 
 ///////////////////////////////////////// loop ////////////////////////////////////
 void loop() {
   unsigned long currentMillis = millis();
 
-  // detect halt condition
-  bool runLight = readLights()&1;
-  if (novaRunning && !runLight) {
-    haltAddress     = readAddr();
-    haltInstruction = examine((haltAddress&0x7fff)-1);
-    haltA0          = examineAC(0);
-    novaRunning     = false;
+  // wait but also detect halt condition
+  while (millis() - currentMillis < 100)
+  { bool runLight = readLights()&1;
+    if (novaRunning && !runLight) {
+      haltAddress     = readAddr();
+      haltInstruction = examine((haltAddress&0x7fff)-1);
+      haltA0          = examineAC(0);
+      novaRunning     = false;
+      examine(haltAddress&0x7fff);
 
-    if (haltInstruction==077377)
-    { lcd.setCursor(31, 1);
-      lcdPrintHex(haltA0);
-      lcd.print(" ");
-      lcdPrintHex(examineAC(1));
-      examine(haltAddress);
-      continueNova();
+      if (haltInstruction==INFO)
+      { lcd.setCursor(31, 1);
+        lcdPrintHex(haltA0);
+        lcd.print(" ");
+        lcdPrintHex(examineAC(1));
+        lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+        lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
+        examine(haltAddress&0x7fff);
+        continueNova();
+        break;
+      }
+
+      // write character
+      else if (haltInstruction==PUTC)
+      { byte b=haltA0&255;
+        Serial.write(b);
+
+        lcdpos = lcdpos % 160;
+        if      (b==12) { lcd.clear(); lcd2.clear(); lcdpos=0; }
+        else if (b==13) { lcdpos = lcdpos - lcdpos%40; clearline=true; }
+        else if (b==10) { lcdpos = lcdpos + 40; ; clearline=true; }
+        else 
+        { if (lcdpos<80)
+          { lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+            if (clearline) 
+            { for (int i=0; i<40; i++) lcd.write(' ');
+              lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+            }
+            lcd.write(b);
+          }
+          else
+          { lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
+            if (clearline) 
+            { for (int i=0; i<40; i++) lcd2.write(' ');
+              lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
+            }
+            lcd2.write(b);
+          }
+          lcdpos = (lcdpos+1)%160;
+          clearline=false;
+        }
+        examine(haltAddress&0x7fff);
+        continueNova();
+      }
+      else if (haltInstruction==WRITELED)
+      { digitalWrite(6, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
+        digitalWrite(A2, 1);
+        digitalWrite(A3, 1);
+        digitalWrite(A4, 1);
+        digitalWrite(A5, 1);
+        digitalWrite(13, (haltA0&1)!=0);
+        delay(50); // must be shorter than 100 ms above!
+        digitalWrite(13, 0);
+        examine(haltAddress&0x7fff);
+        continueNova();
+      }
+      else if (haltInstruction==READBLOCK)
+      { unsigned int A2=examineAC(2);
+        if (haltA0<4)
+        { unsigned int address=haltA0*128;
+          for (int i=0; i<64; i++)
+          { deposit(A2+i, EEPROM.read(address+i*2+1)<<8|EEPROM.read(address+i*2));
+          }
+        }
+        else
+        { int deviceaddress = 0xA6;
+          if (haltA0>1028) deviceaddress+=8;
+          unsigned int address=(haltA0-4)*128; // overflow is OK needs 16 bit
+          for (int i=0; i<64; i++)
+          { deposit(A2+i, i2c_eeprom_read_byte(deviceaddress, address+1)<<8|i2c_eeprom_read_byte(deviceaddress, address));
+          }
+        }
+          
+        depositAC(0, haltA0+1);
+        depositAC(2, A2+64);
+        examine(haltAddress&0x7fff);
+        continueNova();
+      }
+      else if (haltInstruction==WRITEBLOCK)
+      { unsigned int A2=examineAC(2);
+        if (haltA0<4)
+        { int address=haltA0*128;
+          for (int i=0; i<64; i++)
+          { unsigned short s=examine(A2+i);
+            EEPROM.write(address+i*2,   s&255);
+            EEPROM.write(address+i*2+1, s>>8);
+          }
+        }
+        else
+        { int deviceaddress = 0xA6;
+          if (haltA0>1028) deviceaddress+=8;
+          unsigned int address=(haltA0-4)*128; // overflow is OK needs 16 bit
+          byte buffer[26];
+          for (int j=0; j<5; j++)
+          { for (int i=0; i<13; i++)
+            { unsigned short s=examine(A2+j*13+i);
+              buffer[i+1]=s>>8;
+              buffer[i]=s&255;
+              if (j==5 && i==11) break;
+            }
+            i2c_eeprom_write_page(deviceaddress, address+j*26, buffer, j==5?24:26);
+            delay(5);
+          }
+        }
+        depositAC(0, haltA0+1);
+        depositAC(2, A2+64);
+        examine(haltAddress&0x7fff);
+        continueNova();
+      }
+      else if (haltInstruction==GETC)
+      { break; // handled in serial and keyboard code
+      }
+      else
+      { break; // Normal halt: nova ready for input
+      }
     }
 
-    if (haltInstruction==077277)
-    { lcd.write(haltA0&255);
-      Serial.write(haltA0&255);
-      examine(haltAddress);
-      continueNova();
-    }
+    if (SerialIO==false && opmode!=5) break;
   }
   
   int inst=0;		// instruction to Nova
@@ -1811,7 +2014,8 @@ void loop() {
   int count=0;
 
   if (count=Serial.available())
-  { func = processSerial(count);
+  { // Serial.write("S");
+    func = processSerial(count);
     if (SerialIO) return;
     if (func==21) inst=0;
   }
