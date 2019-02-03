@@ -50,6 +50,7 @@
 //              Started on READBLOCK and WRITEBLOCK and their test programs
 // mvh 20190203 Fixed indirect; added serial r/w eeprom; move prog2 and 3 to 050 and 060 and fix for bit2
 //              Added memstepNova(); 9-9=run; serial timeout to 4s
+// mvh 20190203 Store data bigendian into EEPROM
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -1988,12 +1989,12 @@ void loop() {
         examine(haltAddress&0x7fff);
         continueNova();
       }
-      else if (haltInstruction==READBLOCK)
+      else if (haltInstruction==READBLOCK) // stored BIGENDIAN in eeprom
       { unsigned int A2=examineAC(2);
         if (haltA0<4)
         { unsigned int address=haltA0*128;
           for (int i=0; i<64; i++)
-          { deposit(A2+i, EEPROM.read(address+i*2+1)<<8|EEPROM.read(address+i*2));
+          { deposit(A2+i, EEPROM.read(address+i*2)<<8|EEPROM.read(address+i*2+1));
           }
         }
         else
@@ -2001,7 +2002,7 @@ void loop() {
           if (haltA0>1028) deviceaddress+=8;
           unsigned int address=(haltA0-4)*128; // overflow is OK needs 16 bit
           for (int i=0; i<64; i++)
-          { deposit(A2+i, i2c_eeprom_read_byte(deviceaddress, address+1)<<8|i2c_eeprom_read_byte(deviceaddress, address));
+          { deposit(A2+i, i2c_eeprom_read_byte(deviceaddress, address+i*2)<<8|i2c_eeprom_read_byte(deviceaddress, address+i*2+1));
           }
         }
           
@@ -2010,14 +2011,14 @@ void loop() {
         examine(haltAddress&0x7fff);
         continueNova();
       }
-      else if (haltInstruction==WRITEBLOCK)
+      else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
       { unsigned int A2=examineAC(2);
         if (haltA0<4)
         { int address=haltA0*128;
           for (int i=0; i<64; i++)
           { unsigned short s=examine(A2+i);
-            EEPROM.write(address+i*2,   s&255);
-            EEPROM.write(address+i*2+1, s>>8);
+            EEPROM.write(address+i*2, s>>8);
+            EEPROM.write(address+i*2+1, s&255);
           }
         }
         else
@@ -2028,8 +2029,8 @@ void loop() {
           for (int j=0; j<5; j++)
           { for (int i=0; i<13; i++)
             { unsigned short s=examine(A2+j*13+i);
-              buffer[i+1]=s>>8;
-              buffer[i]=s&255;
+              buffer[i]=s>>8;
+              buffer[i+1]=s&255;
               if (j==5 && i==11) break;
             }
             i2c_eeprom_write_page(deviceaddress, address+j*26, buffer, j==5?24:26);
