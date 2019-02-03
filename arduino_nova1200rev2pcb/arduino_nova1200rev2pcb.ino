@@ -52,6 +52,7 @@
 //              Added memstepNova(); 9-9=run; serial timeout to 4s
 // mvh 20190203 Store data bigendian into EEPROM
 // mvh 20190203 Added ADDRESS, LETTERS and LABEL assembly; added MESSAGE and test program
+// mvh 20190203 Made 24LC1025 eeprom work
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -1852,8 +1853,8 @@ void processSerial(int count)
         case 'e': { // read 128 byte block a from eeprom
                   Serial.readBytes(m, 4);
                   unsigned int a=makehex(m);
-                  int deviceaddress = 0xA6;                  
-                  if (a>1028) deviceaddress+=8;
+                  int deviceaddress = 0x53;                  
+                  if (a>515) deviceaddress+=4;
                   for (int i=0; i<128; i++)
                   { String s;
                     if (a<4) s = toHex2(EEPROM.read(a*128+i));
@@ -1866,8 +1867,8 @@ void processSerial(int count)
                   Serial.readBytes(m, 5);
                   unsigned int n = makehex(m)>>12;
                   unsigned int a=makehex(m+1);
-                  int deviceaddress = 0xA6;
-                  if (a>1028) deviceaddress+=8;
+                  int deviceaddress = 0x53;
+                  if (a>515) deviceaddress+=4;
                   Serial.readBytes(m, 32);
                   m[32]=m[33]='0';
                   for (int i=0; i<16; i++) m[i]=makehex(m+i*2)>>8;
@@ -1881,10 +1882,12 @@ void processSerial(int count)
 }
 
 // adapted from I2C eeprom library from https://playground.arduino.cc/code/I2CEEPROM
+// added Wire.begin and Wire.end to allow sharing with lcd data
  
 // WARNING: address is a page address, 6-bit end will wrap around
 // also, data can be maximum of about 30 bytes, because the Wire library has a buffer of 32 bytes
 void i2c_eeprom_write_page(int deviceaddress, unsigned int eeaddresspage, byte* data, byte length ) {
+    Wire.begin();
     Wire.beginTransmission(deviceaddress);
     Wire.write((int)(eeaddresspage >> 8)); // MSB
     Wire.write((int)(eeaddresspage & 0xFF)); // LSB
@@ -1893,10 +1896,12 @@ void i2c_eeprom_write_page(int deviceaddress, unsigned int eeaddresspage, byte* 
         Wire.write(data[c]);
     Wire.endTransmission();
     delay(5);
+    Wire.end();
 }
 
 // maybe let's not read more than 30 or 32 bytes at a time!
 void i2c_eeprom_read_buffer(int deviceaddress, unsigned int eeaddress, byte *buffer, int length ) {
+    Wire.begin();
     Wire.beginTransmission(deviceaddress);
     Wire.write((int)(eeaddress >> 8)); // MSB
     Wire.write((int)(eeaddress & 0xFF)); // LSB
@@ -1905,16 +1910,19 @@ void i2c_eeprom_read_buffer(int deviceaddress, unsigned int eeaddress, byte *buf
     int c = 0;
     for ( c = 0; c < length; c++ )
         if (Wire.available()) buffer[c] = Wire.read();
+    Wire.end();
 }
 
 byte i2c_eeprom_read_byte( int deviceaddress, unsigned int eeaddress ) {
     byte rdata = 0xFF;
+    Wire.begin();
     Wire.beginTransmission(deviceaddress);
     Wire.write((int)(eeaddress >> 8)); // MSB
     Wire.write((int)(eeaddress & 0xFF)); // LSB
     Wire.endTransmission();
     Wire.requestFrom(deviceaddress,1);
     if (Wire.available()) rdata = Wire.read();
+    Wire.end();
     return rdata;
 }
 
@@ -2044,8 +2052,8 @@ void loop() {
           }
         }
         else
-        { int deviceaddress = 0xA6;
-          if (haltA0>1028) deviceaddress+=8;
+        { int deviceaddress = 0x53;
+          if (haltA0>515) deviceaddress+=4;
           unsigned int address=(haltA0-4)*128; // overflow is OK needs 16 bit
           for (int i=0; i<64; i++)
           { deposit(A2+i, i2c_eeprom_read_byte(deviceaddress, address+i*2)<<8|i2c_eeprom_read_byte(deviceaddress, address+i*2+1));
@@ -2068,8 +2076,8 @@ void loop() {
           }
         }
         else
-        { int deviceaddress = 0xA6;
-          if (haltA0>1028) deviceaddress+=8;
+        { int deviceaddress = 0x53;
+          if (haltA0>515) deviceaddress+=4;
           unsigned int address=(haltA0-4)*128; // overflow is OK needs 16 bit
           byte buffer[26];
           for (int j=0; j<5; j++)
