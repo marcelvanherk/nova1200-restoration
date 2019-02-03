@@ -51,6 +51,7 @@
 // mvh 20190203 Fixed indirect; added serial r/w eeprom; move prog2 and 3 to 050 and 060 and fix for bit2
 //              Added memstepNova(); 9-9=run; serial timeout to 4s
 // mvh 20190203 Store data bigendian into EEPROM
+// mvh 20190203 Added ADDRESS, LETTERS and LABEL assembly; added MESSAGE and test program
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -115,12 +116,14 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 
 // any constant in output
 #define CONSTANT(a) ((a)&0xffff)
+#define LETTERS(a, b) (a*256+b)
 
 // label mechanism (labels 0..9 supported)
-#define END      063777   // rarely used instructions
-#define LABEL(a) 064777,a // store label[a]
-#define JMPL(a)  065777,a // JMP to label[a]
-#define JSRL(a)  066777,a // JSR to label[a]
+#define END        063777   // rarely used instructions
+#define LABEL(a)   064777,a // store label[a]
+#define JMPL(a)    065777,a // JMP to label[a]
+#define JSRL(a)    066777,a // JSR to label[a]
+#define ADDRESS(a) 067777,a // Output address of label[a] as constant
 
 // Addresses for memory mapped I/O
 #define CHARIN 040   // input to nova
@@ -133,6 +136,7 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #define READBLOCK  077077 // read 64 word block A0 to address A2
 #define WRITEBLOCK 073377 // write 64 word block A0 from address A2
 #define WRITELED   073277 // A0 bit 0 sets Arduino LED
+#define MESSAGE    073177 // Write text string with %0..%3 substituted for AC0..3
 
 // test assembly program for switch based input
 unsigned short prog1[]={
@@ -198,6 +202,21 @@ unsigned short prog3[]={
   END
 };
 
+unsigned short prog4[]={
+  LDA(2, 2)+PC,    
+  SKIP,
+  ADDRESS(0),
+  MESSAGE,
+  HALT,
+  HALT,
+  HALT,
+  LABEL(0),
+  LETTERS('1', '2'),
+  LETTERS('3', '4'),
+  LETTERS(0, 0),
+  END
+};
+
 // assemble unsigned short array as above to location 'to' in Nova; interpreting labels
 void assemble(int to, unsigned short *prog)
 { int i=0, j=to, a;
@@ -210,7 +229,7 @@ void assemble(int to, unsigned short *prog)
     { labels[prog[i+1]]=j;
       i++;
     }
-    else if (a==065777 || a==066777)
+    else if (a==065777 || a==066777 || a==067777)
       i++;
     else
       j++;
@@ -240,6 +259,10 @@ void assemble(int to, unsigned short *prog)
         deposit(j++, 017777);
         return;
       }
+      i++;
+    }
+    else if (a==067777)
+    { deposit(j++, labels[prog[i+1]]);
       i++;
     }
     else
@@ -756,6 +779,7 @@ String lcdPrintDisas(unsigned int v, int octalmode) {
   else if (v==WRITELED)         s+=(".WRITELED");
   else if (v==READBLOCK)        s+=(".READBLOCK");
   else if (v==WRITEBLOCK)       s+=(".WRITEBLOCK");
+  else if (v==MESSAGE)          s+=(".MESSAGE");
   else if (v==HALT)             s+=("HALT");    //doc0, 4 bits free
   else if ((v&0xe73f)==0x663f)  s+=(".HALT");   // unused system call
 
@@ -1235,8 +1259,9 @@ void tests(int func)
     assemble(0, prog1);
     assemble(050, prog2);
     assemble(060, prog3);
+    assemble(070, prog4);
     lcd.setCursor(0,1);
-    lcd.print("loaded prog1/2/3");
+    lcd.print("loaded prog1..4");
     delay(200);
   }
 }
@@ -1919,6 +1944,34 @@ int kbkey=0;                        // detected key 1..12 on keypad
 int lcdpos=0;
 bool clearline=false;
 
+void putLCD(byte b)
+{       lcdpos = lcdpos % 160;
+        if      (b==12) { lcd.clear(); lcd2.clear(); lcdpos=0; }
+        else if (b==13) { lcdpos = lcdpos - lcdpos%40; clearline=true; }
+        else if (b==10) { lcdpos = lcdpos + 40; ; clearline=true; }
+        else 
+        { if (lcdpos<80)
+          { lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+            if (clearline) 
+            { for (int i=0; i<40; i++) lcd.write(' ');
+              lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+            }
+            lcd.write(b);
+          }
+          else
+          { lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
+            if (clearline) 
+            { for (int i=0; i<40; i++) lcd2.write(' ');
+              lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
+            }
+            lcd2.write(b);
+          }
+          lcdpos = (lcdpos+1)%160;
+          clearline=false;
+        }
+}
+
+
 ///////////////////////////////////////// loop ////////////////////////////////////
 void loop() {
   unsigned long currentMillis = millis();
@@ -1944,35 +1997,28 @@ void loop() {
         continueNova();
         break;
       }
-
-      // write character
-      else if (haltInstruction==PUTC)
+      else if (haltInstruction==PUTC) // write character
       { byte b=haltA0&255;
         Serial.write(b);
-
-        lcdpos = lcdpos % 160;
-        if      (b==12) { lcd.clear(); lcd2.clear(); lcdpos=0; }
-        else if (b==13) { lcdpos = lcdpos - lcdpos%40; clearline=true; }
-        else if (b==10) { lcdpos = lcdpos + 40; ; clearline=true; }
-        else 
-        { if (lcdpos<80)
-          { lcd.setCursor(lcdpos%40, floor(lcdpos/40));
-            if (clearline) 
-            { for (int i=0; i<40; i++) lcd.write(' ');
-              lcd.setCursor(lcdpos%40, floor(lcdpos/40));
-            }
-            lcd.write(b);
-          }
-          else
-          { lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
-            if (clearline) 
-            { for (int i=0; i<40; i++) lcd2.write(' ');
-              lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
-            }
-            lcd2.write(b);
-          }
-          lcdpos = (lcdpos+1)%160;
-          clearline=false;
+        putLCD(b);
+        examine(haltAddress&0x7fff);
+        continueNova();
+      }
+      else if (haltInstruction==MESSAGE) // write character string from address in A2
+      { int a = examineAC(2);
+        for (int i=0; i<40; i++)
+        { unsigned short s=examine(a+i);
+          unsigned short s2=examine(a+i+1);
+          byte b = s>>8;
+          if (b==0) break;
+          if (b=='%') Serial.print(toOct(examineAC(s&3)));
+          else Serial.write(b);
+          putLCD(b);
+          b = s&255;
+          if (b==0) break;
+          if (b=='%') Serial.print(toOct(examineAC((s2>>8)&3)));
+          else Serial.write(b);
+          putLCD(b);
         }
         examine(haltAddress&0x7fff);
         continueNova();
