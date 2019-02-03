@@ -48,6 +48,8 @@
 //              added WRITELED system call (note messes with lcd2)
 //              Added internal/external EEPROM code for READBLOCK and WRITEBLOCK
 //              Started on READBLOCK and WRITEBLOCK and their test programs
+// mvh 20190203 Fixed indirect; added serial r/w eeprom; move prog2 and 3 to 050 and 060 and fix for bit2
+//              Added memstepNova(); 9-9=run; serial timeout to 4s
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -178,15 +180,15 @@ unsigned short prog1[]={
 };
 
 unsigned short prog2[]={
-  SUB(0, 0),
-  SUB(2, 2),
+  SUB(0, 0)+SBN,
+  SUB(2, 2)+SBN,
   WRITEBLOCK,
   HALT,
   END
 };
 
 unsigned short prog3[]={
-  SUB(0, 0),
+  SUB(0, 0)+SBN,
   LDA(2, 2)+PC,    
   SKIP,
   CONSTANT(0100),
@@ -346,6 +348,7 @@ void setup() {
   printHelp(F("This computer was manufactured in 1971"));
 
   Serial.begin(115200);     // usb serial for debug output
+  Serial.setTimeout(4000);  // give me some time to type
 }
 
 void writeData(int d)			// set data register
@@ -538,6 +541,13 @@ void stepNova(void)
   WriteReg(10, 8);
 }
 
+void memstepNova(void)
+{ writeInst(0xff);
+  WriteReg(11, 7);
+  wait();
+  WriteReg(11, 0);
+}
+
 void resetNova(void)
 { stopNova();
   WriteReg(10, 12);
@@ -566,6 +576,14 @@ String toHex(unsigned int v) {
   String s;
   if (v<0x1000) s += "0";
   if (v<0x0100) s += "0";
+  if (v<0x0010) s += "0";
+  s += String(v, HEX);
+  return s;
+}
+
+// make hex string with leading zeros
+String toHex2(unsigned int v) {
+  String s;
   if (v<0x0010) s += "0";
   s += String(v, HEX);
   return s;
@@ -952,7 +970,8 @@ void lcdPrintDebug(void) {
     if (b>3)lcd.print("@");
     if (b>0)lcdPrintOctal(t);
     for (int i=0; i<indirect; i++)
-    { do t=examine(t); while (t&0x8000);
+    { if (b>3) do t=examine(t); while (t&0x8000);
+      else t=examine(t);
     }
          
     if (indirect)
@@ -1213,8 +1232,8 @@ void tests(int func)
   else if (func==7) // Copy prog1/2/3 to NOVA
   { stopNova();
     assemble(0, prog1);
-    assemble(040, prog2);
-    assemble(050, prog3);
+    assemble(050, prog2);
+    assemble(060, prog3);
     lcd.setCursor(0,1);
     lcd.print("loaded prog1/2/3");
     delay(200);
@@ -1231,6 +1250,7 @@ void tests(int func)
 // 4: setup mode --> 0=small LCD, 1=large LCD
 // 5: I/O mode: keyboard and lcd connected to memory mapped I/O of Nova
 // 6: Test mode
+// 9: Run
 
 // 0..7 --> enter address mode; just display address (kbmode==1)
 // *    --> examine ac (0..3) or examime memory (00..03..4..high)
@@ -1595,7 +1615,7 @@ void processkey(short kbkey)
     else if (kbmode<3 && kbkey==9)      // select opmode
     { kbmode = 3;
       lcd.setCursor(0, 1);
-      lcd.print("0-6=exam decimal asm debug setup i/o tst");
+      lcd.print("0-6=exm dec asm dbg set i/o tst 9=run");
       printHelp("Select run mode");
       while(readKeyBoard()!=0);
       delay(50);
@@ -1606,6 +1626,7 @@ void processkey(short kbkey)
       if (kb==11) kb=0;
       kbmode = 0;
       if (kb<=6) opmode=kb;
+      if (kb==9) { printHelp(F("RUN")); startNova(octaladdress); return; }
       lcd.setCursor(0, 1);
       lcd.print(makespc(40));
       if (opmode==0) printHelp(F("N*=AC NN*=exam mem #=edit 9=setup"));
@@ -1614,7 +1635,7 @@ void processkey(short kbkey)
       if (opmode==3) printHelp(F("debug #=step 8=step back 9=setup"));
       if (opmode==4) printHelp(F("setup 0=small screen 1=large screen"));
       if (opmode==5) { printHelp(F("I/O mode 9(long)=exit")); lcd.clear(); }
-      if (opmode==6) { printHelp(F("0=regtest 1=dump 2..4=mtest")); lcd.clear(); }
+      if (opmode==6) { printHelp(F("0=regtest 1=dmp 2-4=mtst 7=pld")); lcd.clear(); }
       lcd.noCursor();
     }
     else if (opmode==4 && kbkey>0)      // setup (not used)
@@ -1663,6 +1684,8 @@ void processkey(short kbkey)
 // LprTEXT[cr]    Display text on LCD panel p, row r
 // :nnaaaa[hhhh]  Deposit nn memory locations
 // ?nnaaaa        Read nn memory locations
+// eaaaa          Read eprom block a
+// wnaaaa[hh]     Write line n in eprom block a (pass 32 characters)
 // /              enter memory mapped serial IO mode, @=exit
 // V              display version information
 
@@ -1673,10 +1696,8 @@ void processkey(short kbkey)
 
 bool SerialIO=false;                // if set serial is sent/recieved to Nova
 
-int processSerial(int count)
-{ int func=0;
-  //for (int i=0; i<count; i++)
-  {   byte b = Serial.read();
+void processSerial(int count)
+{     byte b = Serial.read();
       byte m[50];
       int a;
 
@@ -1707,7 +1728,7 @@ int processSerial(int count)
       }
       else
         switch(b)
-      { case 'T': resetNova(); break;
+      { case 'T': resetNova(); // fall through to stop io mode
         case 'S': stopNova(); 
                   if(SerialIO or opmode==5) 
                   { Serial.println("interactive mode");
@@ -1715,32 +1736,30 @@ int processSerial(int count)
                   }  
                   break;
         case 'I': stepNova(); break;
-        case 'Y': func=21; break;
+        case 'Y': memstepNova(); break;
         case 'O': continueNova(); break;
-        case 'o': Serial.readBytes(m, 4);
+        case 'o': Serial.readBytes(m, 4); // continue put data on switches
                   continueNovaSw(makehex(m)); 
                   break;
         case 'N': interruptNova(); break;
         case 'G': Serial.readBytes(m, 4);
                   startNova(makehex(m));
-                  //func=33; inst=0xfb; 
-                  //writeData(makehex(m)); 
                   break;
-        case 'M': Serial.readBytes(m, 4); 
+        case 'M': Serial.readBytes(m, 4); // read one Memory location 
                   Serial.println(toHex(examine(makehex(m)))); 
                   break;
-        case 'D': Serial.readBytes(m, 8); 
+        case 'D': Serial.readBytes(m, 8); // Deposit one memory location
                   deposit(makehex(m), makehex(m+4)); break;
-        case 'E': Serial.readBytes(m, 1); 
+        case 'E': Serial.readBytes(m, 1); // Examine AC
                   Serial.println(toHex(examineAC(m[0]-'0'))); break;
-        case 'F': Serial.readBytes(m, 5); 
+        case 'F': Serial.readBytes(m, 5); // Fill AC
                   depositAC(m[0]-'0', makehex(m+1)); break;
-        case 'X': Serial.readBytes(m, 1); 
+        case 'X': Serial.readBytes(m, 1); // Read frontpanel LEDs
                   if (m[0]=='0') Serial.println(toHex(readData())); 
                   if (m[0]=='1') Serial.println(toHex(readAddr())); 
                   if (m[0]=='2') Serial.println(toHex(readLights())); 
                   break;
-        case 'L': {int l=Serial.readBytesUntil(0x0d, m, 42);
+        case 'L': {int l=Serial.readBytesUntil(0x0d, m, 42); // write LCD text
                   if (m[0]=='0') 
                   { lcd.setCursor(0, m[1]-'0');
                     lcd.print(makespc(40));
@@ -1755,7 +1774,7 @@ int processSerial(int count)
                   }
                   break;
                   }
-        case ':': {
+        case ':': { // write set of memory locations
                   Serial.readBytes(m, 6);
                   unsigned int n = makehex(m)>>8;
                   unsigned int a=makehex(m+2);
@@ -1763,18 +1782,20 @@ int processSerial(int count)
                   for (int i=0; i<n; i++) deposit(a++, makehex(m+i*4));
                   break;
                   }
-        case '?': {
+        case '?': { // read set of memory locations
                   Serial.readBytes(m, 6);
                   unsigned int n = makehex(m)>>8;
                   unsigned int a=makehex(m+2);
-                  for (int i=0; i<n; i++) Serial.println(toHex(examine(a++)));
+                  for (int i=0; i<n; i++) 
+                    if ((i&7)==7) Serial.println(toHex(examine(a++))); 
+                    else Serial.print(toHex(examine(a++)));
                   break;
                   }
-        case 'l': {
+        case 'l': { // disassemble memory locations
                   Serial.readBytes(m, 6);
                   unsigned int n = makehex(m)>>8;
                   unsigned int a = makehex(m+2);
-                  for (int i=0; i<n; i++) 
+                  for (int i=0; i<n; i++)
                   { Serial.print(toOct(a));
                     unsigned int v=examine(a++);
                     Serial.print(" ");
@@ -1783,18 +1804,18 @@ int processSerial(int count)
                   }
                   break;
                   }
-        case 'r': serialDebug(1);
+        case 'r': serialDebug(1); // show registers
                   break;
-        case 'i': serialDebug(2);
+        case 'i': serialDebug(2); // instruction step
                   Serial.println();
                   stepNova();
                   break;
-        case 's': serialDebug(2);
+        case 's': serialDebug(1); // debug step; show registers, then execute instruction
+                  serialDebug(2); 
                   Serial.println();
                   stepNova();
-                  serialDebug(1);
                   break;
-        case '/': SerialIO=true;
+        case '/': SerialIO=true; // enter IO mode
                   Serial.println("IO mode; @=exit");
                   lcd.setCursor(0, 0);
                   lcd.print(makespc(40));
@@ -1802,13 +1823,35 @@ int processSerial(int count)
                   lcd.print(makespc(40));
                   lcd.setCursor(0, 0);
                   break;
-        case 'V': Serial.println("Arduino code Marcel van Herk 20190202");
+        case 'e': { // read 128 byte block a from eeprom
+                  Serial.readBytes(m, 4);
+                  unsigned int a=makehex(m);
+                  int deviceaddress = 0xA6;                  
+                  if (a>1028) deviceaddress+=8;
+                  for (int i=0; i<128; i++)
+                  { String s;
+                    if (a<4) s = toHex2(EEPROM.read(a*128+i));
+                    else     s = toHex2(i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i));
+                    if ((i&15)==15) Serial.println(s); else Serial.print(s);
+                  }
                   break;
-      }
-
-  }
-
-  return func;
+                  }
+        case 'w': { // write 16 byte part n(0..7) of 128 byte block a to eeprom
+                  Serial.readBytes(m, 5);
+                  unsigned int n = makehex(m)>>12;
+                  unsigned int a=makehex(m+1);
+                  int deviceaddress = 0xA6;
+                  if (a>1028) deviceaddress+=8;
+                  Serial.readBytes(m, 32);
+                  m[32]=m[33]='0';
+                  for (int i=0; i<16; i++) m[i]=makehex(m+i*2)>>8;
+                  if (a<4) for (int j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
+                  else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, m, 16);
+                  break;
+                  }
+        case 'V': Serial.println("Arduino code Marcel van Herk 20190203");
+                  break;
+        }
 }
 
 // adapted from I2C eeprom library from https://playground.arduino.cc/code/I2CEEPROM
@@ -2015,9 +2058,8 @@ void loop() {
 
   if (count=Serial.available())
   { // Serial.write("S");
-    func = processSerial(count);
+    processSerial(count);
     if (SerialIO) return;
-    if (func==21) inst=0;
   }
 
   // loop frequency (go faster when in serial IO mode)
@@ -2248,10 +2290,8 @@ void loop() {
       }
       if (func==21)
       { stopNova();
-        WriteReg(11, 7);
-        delay(pulselen);
+        memstepNova();
         Serial.println("memory step");
-        WriteReg(11, 0);
         lcd.setCursor(0,1);
         lcd.print(makespc(40));
         lcd.setCursor(0,1);
