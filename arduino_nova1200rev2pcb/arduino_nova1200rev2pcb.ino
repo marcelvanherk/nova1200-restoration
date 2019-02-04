@@ -53,6 +53,7 @@
 // mvh 20190203 Store data bigendian into EEPROM
 // mvh 20190203 Added ADDRESS, LETTERS and LABEL assembly; added MESSAGE and test program
 // mvh 20190203 Made 24LC1025 eeprom work
+// mvh 20190204 EEPROM core bank 0=512 byte (fits arduino), 1-4=8kw, 5=32kw (total 128kb to fit 24LC1025)
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -1255,7 +1256,7 @@ void tests(int func)
     lcd.print("sent 6666 to READS");
     delay(200);
   }
-  else if (func==7) // Copy prog1/2/3 to NOVA
+  else if (func==7) // Copy prog1..4 to NOVA
   { stopNova();
     assemble(0, prog1);
     assemble(050, prog2);
@@ -1277,6 +1278,8 @@ void tests(int func)
 // 4: setup mode --> 0=small LCD, 1=large LCD
 // 5: I/O mode: keyboard and lcd connected to memory mapped I/O of Nova
 // 6: Test mode
+// 7: Save core mode
+// 8: Load core mode
 // 9: Run
 
 // 0..7 --> enter address mode; just display address (kbmode==1)
@@ -1311,6 +1314,7 @@ unsigned int octaladdress;          // last used octal address from keypad/front
 unsigned int opmode=0;              // opmode, set with key 9
 int debugging=0;                    // set after single instruction step
 unsigned short haltInstruction, haltA0, haltAddress;
+unsigned int core_lengths[] = {4, 128, 128, 128, 128, 512};
 
 void processkey(short kbkey)
 {   /////////////////////////// keypad pressed /////////////////////////
@@ -1642,7 +1646,7 @@ void processkey(short kbkey)
     else if (kbmode<3 && kbkey==9)      // select opmode
     { kbmode = 3;
       lcd.setCursor(0, 1);
-      lcd.print("0-6=exm dec asm dbg set i/o tst 9=run");
+      lcd.print("0-9=exa dec as dbg su io tst sav lod run");
       printHelp("Select run mode");
       while(readKeyBoard()!=0);
       delay(50);
@@ -1652,7 +1656,7 @@ void processkey(short kbkey)
     { int kb=kbkey;
       if (kb==11) kb=0;
       kbmode = 0;
-      if (kb<=6) opmode=kb;
+      if (kb<=8) opmode=kb;
       if (kb==9) { printHelp(F("RUN")); startNova(octaladdress); return; }
       lcd.setCursor(0, 1);
       lcd.print(makespc(40));
@@ -1663,6 +1667,8 @@ void processkey(short kbkey)
       if (opmode==4) printHelp(F("setup 0=small screen 1=large screen"));
       if (opmode==5) { printHelp(F("I/O mode 9(long)=exit")); lcd.clear(); }
       if (opmode==6) { printHelp(F("0=regtest 1=dmp 2-4=mtst 7=pld")); lcd.clear(); }
+      if (opmode==7) { printHelp(F("Save core to eeprom bank N")); lcd.clear(); }
+      if (opmode==8) { printHelp(F("Load core from eeprom bank N")); lcd.clear(); }
       lcd.noCursor();
     }
     else if (opmode==4 && kbkey>0)      // setup (not used)
@@ -1678,6 +1684,36 @@ void processkey(short kbkey)
     { int kb=kbkey;
       if (kb==11) kb=0;
       tests(kb);
+      lcd.clear();
+      kbmode = 0;
+      opmode = 0;
+      printHelp("");
+      lcd.noCursor();
+    }
+    else if (opmode==7 && kbkey>0)      // save core
+    { int kb=kbkey;
+      if (kb==11) kb=0;
+      if (kb<=5)
+      { unsigned int b=0;
+        for (int i=0; i<kb; i++) b += core_lengths[i];
+        for (int i=0; i<core_lengths[kb]; i++) 
+          writeBlocktoEEPROM(b+i, i*64);
+      }
+      lcd.clear();
+      kbmode = 0;
+      opmode = 0;
+      printHelp("");
+      lcd.noCursor();
+    }
+    else if (opmode==8 && kbkey>0)      // load core
+    { int kb=kbkey;
+      if (kb==11) kb=0;
+      if (kb<=5)
+      { unsigned int b=0;
+        for (int i=0; i<kb; i++) b += core_lengths[i];
+        for (int i=0; i<core_lengths[kb]; i++) 
+          readBlockfromEEPROM(b+i, i*64);
+      }
       lcd.clear();
       kbmode = 0;
       opmode = 0;
@@ -1876,7 +1912,7 @@ void processSerial(int count)
                   else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, m, 16);
                   break;
                   }
-        case 'V': Serial.println("Arduino code Marcel van Herk 20190203");
+        case 'V': Serial.println("Arduino code Marcel van Herk 20190204");
                   break;
         }
 }
@@ -1953,32 +1989,74 @@ int lcdpos=0;
 bool clearline=false;
 
 void putLCD(byte b)
-{       lcdpos = lcdpos % 160;
-        if      (b==12) { lcd.clear(); lcd2.clear(); lcdpos=0; }
-        else if (b==13) { lcdpos = lcdpos - lcdpos%40; clearline=true; }
-        else if (b==10) { lcdpos = lcdpos + 40; ; clearline=true; }
-        else 
-        { if (lcdpos<80)
-          { lcd.setCursor(lcdpos%40, floor(lcdpos/40));
-            if (clearline) 
-            { for (int i=0; i<40; i++) lcd.write(' ');
-              lcd.setCursor(lcdpos%40, floor(lcdpos/40));
-            }
-            lcd.write(b);
-          }
-          else
-          { lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
-            if (clearline) 
-            { for (int i=0; i<40; i++) lcd2.write(' ');
-              lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
-            }
-            lcd2.write(b);
-          }
-          lcdpos = (lcdpos+1)%160;
-          clearline=false;
-        }
+{ lcdpos = lcdpos % 160;
+  if      (b==12) { lcd.clear(); lcd2.clear(); lcdpos=0; }
+  else if (b==13) { lcdpos = lcdpos - lcdpos%40; clearline=true; }
+  else if (b==10) { lcdpos = lcdpos + 40; ; clearline=true; }
+  else 
+  { if (lcdpos<80)
+    { lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+      if (clearline) 
+      { for (int i=0; i<40; i++) lcd.write(' ');
+        lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+      }
+      lcd.write(b);
+    }
+    else
+    { lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
+      if (clearline) 
+      { for (int i=0; i<40; i++) lcd2.write(' ');
+        lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
+      }
+      lcd2.write(b);
+    }
+    lcdpos = (lcdpos+1)%160;
+    clearline=false;
+  }
 }
 
+void readBlockfromEEPROM(int block, unsigned int A2)
+{ if (block<4)
+  { unsigned int address=block*128;
+    for (int i=0; i<64; i++)
+    { deposit(A2+i, EEPROM.read(address+i*2)<<8|EEPROM.read(address+i*2+1));
+    }
+  }
+  else
+  { int deviceaddress = 0x53;
+    if (block>515) deviceaddress+=4;
+    unsigned int address=(block-4)*128; // overflow is OK needs 16 bit
+    for (int i=0; i<64; i++)
+    { deposit(A2+i, i2c_eeprom_read_byte(deviceaddress, address+i*2)<<8|i2c_eeprom_read_byte(deviceaddress, address+i*2+1));
+    }
+  }
+}
+
+void writeBlocktoEEPROM(int block, unsigned int A2)
+{ if (block<4)
+  { int address=block*128;
+    for (int i=0; i<64; i++)
+    { unsigned short s=examine(A2+i);
+      EEPROM.write(address+i*2, s>>8);
+      EEPROM.write(address+i*2+1, s&255);
+    }
+  }
+  else
+  { int deviceaddress = 0x53;
+    if (block>515) deviceaddress+=4;
+    unsigned int address=(block-4)*128; // overflow is OK needs 16 bit
+    byte buffer[26];
+    for (int j=0; j<8; j++)
+    { for (int i=0; i<8; i++)
+      { unsigned short s=examine(A2+j*8+i);
+        buffer[i*2]=s>>8;
+        buffer[i*2+1]=s&255;
+      }
+      i2c_eeprom_write_page(deviceaddress, address+j*16, buffer, 16);
+      delay(5);
+    }
+  }
+}
 
 ///////////////////////////////////////// loop ////////////////////////////////////
 void loop() {
@@ -2045,21 +2123,7 @@ void loop() {
       }
       else if (haltInstruction==READBLOCK) // stored BIGENDIAN in eeprom
       { unsigned int A2=examineAC(2);
-        if (haltA0<4)
-        { unsigned int address=haltA0*128;
-          for (int i=0; i<64; i++)
-          { deposit(A2+i, EEPROM.read(address+i*2)<<8|EEPROM.read(address+i*2+1));
-          }
-        }
-        else
-        { int deviceaddress = 0x53;
-          if (haltA0>515) deviceaddress+=4;
-          unsigned int address=(haltA0-4)*128; // overflow is OK needs 16 bit
-          for (int i=0; i<64; i++)
-          { deposit(A2+i, i2c_eeprom_read_byte(deviceaddress, address+i*2)<<8|i2c_eeprom_read_byte(deviceaddress, address+i*2+1));
-          }
-        }
-          
+        readBlockfromEEPROM(haltA0, A2);
         depositAC(0, haltA0+1);
         depositAC(2, A2+64);
         examine(haltAddress&0x7fff);
@@ -2067,30 +2131,7 @@ void loop() {
       }
       else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
       { unsigned int A2=examineAC(2);
-        if (haltA0<4)
-        { int address=haltA0*128;
-          for (int i=0; i<64; i++)
-          { unsigned short s=examine(A2+i);
-            EEPROM.write(address+i*2, s>>8);
-            EEPROM.write(address+i*2+1, s&255);
-          }
-        }
-        else
-        { int deviceaddress = 0x53;
-          if (haltA0>515) deviceaddress+=4;
-          unsigned int address=(haltA0-4)*128; // overflow is OK needs 16 bit
-          byte buffer[26];
-          for (int j=0; j<5; j++)
-          { for (int i=0; i<13; i++)
-            { unsigned short s=examine(A2+j*13+i);
-              buffer[i]=s>>8;
-              buffer[i+1]=s&255;
-              if (j==5 && i==11) break;
-            }
-            i2c_eeprom_write_page(deviceaddress, address+j*26, buffer, j==5?24:26);
-            delay(5);
-          }
-        }
+        writeBlocktoEEPROM(haltA0, A2);
         depositAC(0, haltA0+1);
         depositAC(2, A2+64);
         examine(haltAddress&0x7fff);
