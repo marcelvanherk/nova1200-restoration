@@ -78,7 +78,7 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #define NEG(s, d) (0100400+(s<<13)+(d<<11))
 #define MOV(s, d) (0101000+(s<<13)+(d<<11))
 #define INC(s, d) (0101400+(s<<13)+(d<<11))
-#define ADDC(s, d)(0102000+(s<<13)+(d<<11)) // clashes with ADC
+#define ADDC(s, d)(0102000+(s<<13)+(d<<11)) // clashes with arduino's ADC
 #define SUB(s, d) (0102400+(s<<13)+(d<<11))
 #define ADD(s, d) (0103000+(s<<13)+(d<<11))
 #define AND(s, d) (0103400+(s<<13)+(d<<11))
@@ -86,7 +86,7 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #define INTEN      060177
 #define INTDS      060277
 #define READS(d)  (060477+(d<<11))
-#define SKIP      (MOV(0,0)+CZ+SZC) // for bit 2 broken
+#define SKIP      (MOV(0,0)+NOLOAD+SKP) 
 
 // relative addressing for a, e.g. STA(0, 10)+AC2 or STA(0, 10)+IND or JMP(0)+AC3
 #define PC  00400
@@ -187,15 +187,15 @@ unsigned short prog1[]={
 };
 
 unsigned short prog2[]={
-  SUB(0, 0)+SBN,
-  SUB(2, 2)+SBN,
+  SUB(0, 0),
+  SUB(2, 2),
   WRITEBLOCK,
   HALT,
   END
 };
 
 unsigned short prog3[]={
-  SUB(0, 0)+SBN,
+  SUB(0, 0),
   LDA(2, 2)+PC,    
   SKIP,
   CONSTANT(0100),
@@ -210,8 +210,6 @@ unsigned short prog4[]={
   ADDRESS(0),
   MESSAGE,
   HALT,
-  HALT,
-  HALT,
   LABEL(0),
   LETTERS('1', '2'),
   LETTERS('3', '4'),
@@ -222,17 +220,19 @@ unsigned short prog4[]={
 // assemble unsigned short array as above to location 'to' in Nova; interpreting labels
 void assemble(int to, unsigned short *prog)
 { int i=0, j=to, a;
-  unsigned short labels[10];
+  unsigned short labels[20];
   
   // 2 pass assembler; pass 1 collects labels only
   do
   { a=prog[i];
-    if (a==064777)
+    if (a==064777) // define label: 2 input items, no output 
     { labels[prog[i+1]]=j;
       i++;
     }
-    else if (a==065777 || a==066777 || a==067777)
-      i++;
+    else if (a==065777 || a==066777 || a==067777) // use label: 2 input, 1 output
+    { i++;
+      j++;
+    }
     else
       j++;
     i++;
@@ -245,12 +245,12 @@ void assemble(int to, unsigned short *prog)
   { a=prog[i];
     if (a==064777)
       i++;
-    else if (a==065777 || a==066777)
+    else if (a==065777 || a==066777) // relative or page 0 jump 
     { short target=labels[prog[i+1]];
-      if (target<256)
+      if (target<256)                // page 0
       { if (a==065777) deposit(j++, 0+target);
         else           deposit(j++, 040000+target);
-      }
+      }                             // PC relative
       else if (target-j>-127 && target-j<127)
       { target = target-j;
         if (a==065777) deposit(j++, 0400+(target&255));
@@ -263,7 +263,7 @@ void assemble(int to, unsigned short *prog)
       }
       i++;
     }
-    else if (a==067777)
+    else if (a==067777)  // output label addresss
     { deposit(j++, labels[prog[i+1]]);
       i++;
     }
@@ -349,7 +349,7 @@ void WriteReg(byte n, byte value) {
 }
 
 void setup() {
-  for (int i=2; i<=11; i++) 
+  for (byte i=2; i<=11; i++) 
     pinMode(i, OUTPUT);
 
   digitalWrite(9, 1);     // disable both board enables
@@ -364,9 +364,23 @@ void setup() {
   WriteReg(11, 0);
 
   lcd.begin(40, 2);   // welcome text on LCD
-  lcd.print(F("DGC    Nova 1210"));
+  lcd.print(F("Nova panel - Marcel van Herk " __DATE__));
+
+  unsigned short memsize;
+  for (byte i=0; i<8; i++)
+  { unsigned int a=i*4096-1;
+    if (examine(a)==0)
+    { deposit(a, 1);
+      if (examine(a)==1) memsize=a+1;
+      deposit(a, 0);
+    }
+    else
+      memsize=a+1;
+  }
   lcd.setCursor(0, 1);
-  lcd.print(F("DataGeneral 1971"));
+  lcd.print(F("Nova memory: "));
+  lcd.print(memsize);
+  lcd.print(F(" 16-bit words"));
   
   lcd2.begin(40, 2);    // welcome text on LCD
   lcd2.setCursor(0, 1);
@@ -379,14 +393,14 @@ void setup() {
 
 void writeData(int d)			// set data register
 { WriteReg(0, d&15);        // data L
-  WriteReg(1, (d>>4)&15);   // data H
-  WriteReg(8, (d>>8)&15);   // data L brd2
-  WriteReg(9, (d>>12)&15);  // data H brd2
+  WriteReg(1, (d>>4));   // data H
+  WriteReg(8, (d>>8));   // data L brd2
+  WriteReg(9, (d>>12));  // data H brd2
 }
 
 void writeInst(int i)			// set instruction register (only 8 MSB bits used, reg 2 and 3 ignored)
-{ WriteReg(14, i&15);   // data L brd2
-  WriteReg(15, (i>>4)&15);  // data H brd2
+{ WriteReg(14, i);   // data L brd2
+  WriteReg(15, (i>>4));  // data H brd2
 }
 
 unsigned int readReg(byte n) {
@@ -712,13 +726,13 @@ String lcdPrintNoload(unsigned int s) {
 // part of disassembler - return skip part of operate instruction
 String lcdPrintSkip(unsigned int s) {
   if (s==0) return String("");
-  if (s==1) return String("skp");
-  if (s==2) return String("szc");
-  if (s==3) return String("snc");
-  if (s==4) return String("szr");
-  if (s==5) return String("snr");
-  if (s==6) return String("sez");
-  if (s==7) return String("sbn");
+  else if (s==1) return String("skp");
+  else if (s==2) return String("szc");
+  else if (s==3) return String("snc");
+  else if (s==4) return String("szr");
+  else if (s==5) return String("snr");
+  else if (s==6) return String("sez");
+  else if (s==7) return String("sbn");
 }
 
 // part of disassembler - return target of memory access instruction
@@ -1300,6 +1314,7 @@ void tests(int func)
 
 // setup mode
 // 0..6 sets mode
+// 7=save to EEPROM, 8=load from EEPROM, 9=run/stop
 
 // IO mode: 9 (long) enters setup mode
 // any character on keypad is written to Nova location 040
@@ -1317,415 +1332,420 @@ unsigned short haltInstruction, haltA0, haltAddress;
 unsigned int core_lengths[] = {4, 128, 128, 128, 128, 512};
 
 void processkey(short kbkey)
-{   /////////////////////////// keypad pressed /////////////////////////
-    // respond to keypad keys
-    // octal key or numerical key in decimal mode?
-    bool isoct = ((kbkey>=1 && kbkey<=7) or kbkey==11);
-    if (opmode==1)
-      isoct = isoct or kbkey==8 or kbkey==9;
+{ /////////////////////////// keypad pressed /////////////////////////
+  // octal key or numerical key in decimal mode?
+  bool isoct = ((kbkey>=1 && kbkey<=7) or kbkey==11);
+  if (opmode==1)
+    isoct = isoct or kbkey==8 or kbkey==9;
 
-    if (isoct && kbmode<=1 && opmode<=3) // octal key: start or continue address mode
-    { if (kbmode==0)
-      { kbmode=1;
-        octalval=0;
-        noctal=0;
+  if (isoct && kbmode<=1 && opmode<=3) // octal key: start or continue address mode
+  { if (kbmode==0)
+    { kbmode=1;
+      octalval=0;
+      noctal=0;
+      printHelp("* = goto; 8 = backspace");
+    }
+
+    int kb=kbkey;
+    if (kb==11) kb=0;
+
+    if (noctal==0)
+    { octalval=0;
+      lcd.setCursor(0,0);
+      lcd.print(makespc(40)); 
+      lcd.noCursor();
+      if (opmode==1)
+        printHelp("* = goto");
+      else
         printHelp("* = goto; 8 = backspace");
-      }
-
-      int kb=kbkey;
-      if (kb==11) kb=0;
-
-      if (noctal==0)
-      { octalval=0;
-        lcd.setCursor(0,0);
-        lcd.print(makespc(40)); 
-        lcd.noCursor();
-        if (opmode==1)
-          printHelp("* = goto");
-        else
-          printHelp("* = goto; 8 = backspace");
-      }
-
-      lcd.setCursor(noctal,0);
-      lcd.print(kb); octalval = (opmode==1?10:8)*octalval+kb; noctal++; 
-      lcd.noCursor();
-    }
-    else if (kbkey==8 && kbmode==1 && noctal>0 && opmode<3) // backspace in address mode
-    { noctal--;
-      octalval = octalval>>3;
-      lcd.setCursor(noctal,0);
-      lcd.print(" ");
     }
 
-    else if (isoct && kbmode==2 && opmode==0)   //  octal key in edit data mode
-    { int kb=kbkey;
-      if (kb==11) kb=0;
-      int pos=(5-noctal)*3;
-      octalval = (octalval&(~(7<<pos)))+(kb<<pos); noctal++; 
-      octalval = octalval & 0xffff;
-      lcd.setCursor(0,0);
-      lcdPrintOctal(octaladdress);
-      lcd.print(":");
-      lcdPrintOctal(octalval);
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      if (octaladdress<0xfffc) 
-      { lcd.print("      :");
-        lcd.print(lcdPrintDisas(octalval, 8));
-      }
-      else 
-      { lcd.print("ac");
-        lcd.print(octaladdress-0xfffc);
-      }
-      if (noctal>5) noctal=0;
-      lcd.setCursor(7+noctal,0);
-      lcd.cursor();
-    }
+    lcd.setCursor(noctal,0);
+    lcd.print(kb); octalval = (opmode==1?10:8)*octalval+kb; noctal++; 
+    lcd.noCursor();
+  }
+  else if (kbkey==8 && kbmode==1 && noctal>0 && opmode<3) // backspace in address mode
+  { noctal--;
+    octalval = octalval>>3;
+    lcd.setCursor(noctal,0);
+    lcd.print(" ");
+  }
 
-    else if (isoct && kbmode==2 && opmode==1)   //  numeric key in decimal mode
-    { int kb=kbkey;
-      if (kb==11) kb=0;
-      int pos=6-noctal;
-      octalval = 10*octalval + kb;
-      noctal++; 
-      octalval = octalval & 0xffff;
-      lcd.setCursor(0,0);
-      lcdPrintDecimal(octaladdress);
-      lcd.print(":");
-      lcd.print(octalval);
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      if (octaladdress>=0xfffc) 
-      { lcd.print("ac");
-        lcd.print(octaladdress-0xfffc);
-      }
-      if (noctal>6) noctal=0;
-      lcd.noCursor();
+  else if (isoct && kbmode==2 && opmode==0)   //  octal key in edit data mode
+  { int kb=kbkey;
+    if (kb==11) kb=0;
+    int pos=(5-noctal)*3;
+    octalval = (octalval&(~(7<<pos)))+(kb<<pos); noctal++; 
+    octalval = octalval & 0xffff;
+    lcd.setCursor(0,0);
+    lcdPrintOctal(octaladdress);
+    lcd.print(":");
+    lcdPrintOctal(octalval);
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    if (octaladdress<0xfffc) 
+    { lcd.print("      :");
+      lcd.print(lcdPrintDisas(octalval, 8));
     }
+    else 
+    { lcd.print("ac");
+      lcd.print(octaladdress-0xfffc);
+    }
+    if (noctal>5) noctal=0;
+    lcd.setCursor(7+noctal,0);
+    lcd.cursor();
+  }
 
-    else if (isoct && kbmode==2 && opmode==2)   //  octal key in assembly mode
-    { unsigned long kb=kbkey;
-      if (kb==11) kb=0;
-      int pos=(6-noctal)*3;
-      octalval = (octalval&(~((unsigned long)7<<pos)))+(kb<<pos); noctal++; 
-      octalval = octalval & 0xffffff;
-      lcd.setCursor(0,0);
-      lcdPrintOctal(octaladdress);
-      lcd.print(":");
-      lcdPrintLongOctal(octalval);
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      if (octaladdress<0xfffc) 
-      lcd.print("      :");
-      lcd.print(lcdPrintMiniDisas(octalval, 8));
-      if (noctal>6) noctal=0;
-      printAssemblyHelp(octalval, noctal);
-      lcd.setCursor(7+noctal,0);
-      lcd.cursor();
+  else if (isoct && kbmode==2 && opmode==1)   //  numeric key in decimal mode
+  { int kb=kbkey;
+    if (kb==11) kb=0;
+    int pos=6-noctal;
+    octalval = 10*octalval + kb;
+    noctal++; 
+    octalval = octalval & 0xffff;
+    lcd.setCursor(0,0);
+    lcdPrintDecimal(octaladdress);
+    lcd.print(":");
+    lcd.print(octalval);
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    if (octaladdress>=0xfffc) 
+    { lcd.print("ac");
+      lcd.print(octaladdress-0xfffc);
     }
+    if (noctal>6) noctal=0;
+    lcd.noCursor();
+  }
 
-    else if (kbkey==8 && kbmode==2 && opmode<=2)  // arrow back data mode
-    { if (noctal==0) noctal=opmode?6:5; else noctal--;
-      lcd.setCursor(7+noctal,0);
-      lcd.cursor();
-      if (opmode==2) printAssemblyHelp(octalval, noctal);
-    }
-    else if (kbkey==9 && kbmode==2 && opmode<=2)  // arrow forward data mode
-    { noctal++; if (noctal>(opmode?6:5)) noctal=0;
-      lcd.setCursor(7+noctal,0);
-      lcd.cursor();
-      if (opmode==2) printAssemblyHelp(octalval, noctal);
-    }
- 
-    else if ((kbkey==10 && opmode<=3) or                        // * = examine / examine next
-             (kbkey==8 && kbmode==1 && noctal==0 && opmode<=2)) // 8 = examine previous
-    { if (kbmode==2) ; //
-      else if (kbkey==8) octaladdress--;
-      else if (noctal==0) octaladdress++;
-      else if (noctal==1 && octalval<4) octaladdress = 0xfffc + (octalval&3);
-      else octaladdress = octalval;
-      lcd.setCursor(0,0);
-      if (opmode==1)
-        lcdPrintDecimal(octaladdress); 
-      else
-        lcdPrintOctal(octaladdress); 
-      stopNova();
-      lcd.print(":"); 
-      if (opmode==1)
-        lcdPrintDecimal(examine(octaladdress));
-      else
-        lcdPrintOctal(examine(octaladdress));
-      lcd.print(makespc(40)); 
-      kbmode=1;
-      noctal=0;
-      octalval=0;
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      if (octaladdress<0xfffc) 
-      { lcd.print("      :"); 
-        lcd.print(lcdPrintDisas(examine(octaladdress), 8));
-      }
-      else 
-      { lcd.print("ac");
-        lcd.print(octaladdress-0xfffc);
-      }
-      lcd.noCursor();
-      if (opmode==0 or opmode==2) printHelp("*/8 = next/prev address; # = edit");
-      if (opmode==1) printHelp("* = next address; # = edit");
-      if (opmode==3) printHelp("#=step, 8=step back");
-    }
-    else if (kbkey==12 && kbmode<2 && opmode==0)  // # = start edit mode
-    { kbmode = 2;
-      noctal=0;
-      octalval = examine(octaladdress);
-      lcd.setCursor(0,0);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,0);
-      lcdPrintOctal(octaladdress); 
-      lcd.print(":"); 
-      lcdPrintOctal(octalval);
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      if (octaladdress<0xfffc) 
-      { lcd.print("      :"); 
-        lcd.print(lcdPrintDisas(examine(octaladdress), 8));
-      }
-      else 
-      { lcd.print("ac");
-        lcd.print(octaladdress-0xfffc);
-      }
-      printHelp("8/9 = left/right; # = store; * = cancel");
-      lcd.setCursor(7+noctal,0);
-      lcd.cursor();
-    }
-    else if (kbkey==12 && kbmode<2 && opmode==1)  // # = start decimal edit mode
-    { kbmode = 2;
-      noctal=0;
-      //octalval = examine(octaladdress);
-      octalval=0;
-      lcd.setCursor(0,0);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,0);
+  else if (isoct && kbmode==2 && opmode==2)   //  octal key in assembly mode
+  { unsigned long kb=kbkey;
+    if (kb==11) kb=0;
+    int pos=(6-noctal)*3;
+    octalval = (octalval&(~((unsigned long)7<<pos)))+(kb<<pos); noctal++; 
+    octalval = octalval & 0xffffff;
+    lcd.setCursor(0,0);
+    lcdPrintOctal(octaladdress);
+    lcd.print(":");
+    lcdPrintLongOctal(octalval);
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    if (octaladdress<0xfffc) 
+    lcd.print("      :");
+    lcd.print(lcdPrintMiniDisas(octalval, 8));
+    if (noctal>6) noctal=0;
+    printAssemblyHelp(octalval, noctal);
+    lcd.setCursor(7+noctal,0);
+    lcd.cursor();
+  }
+
+  else if (kbkey==8 && kbmode==2 && opmode<=2)  // arrow back data mode
+  { if (noctal==0) noctal=opmode?6:5; else noctal--;
+    lcd.setCursor(7+noctal,0);
+    lcd.cursor();
+    if (opmode==2) printAssemblyHelp(octalval, noctal);
+  }
+  else if (kbkey==9 && kbmode==2 && opmode<=2)  // arrow forward data mode
+  { noctal++; if (noctal>(opmode?6:5)) noctal=0;
+    lcd.setCursor(7+noctal,0);
+    lcd.cursor();
+    if (opmode==2) printAssemblyHelp(octalval, noctal);
+  }
+
+  else if ((kbkey==10 && opmode<=3) or                        // * = examine / examine next
+           (kbkey==8 && kbmode==1 && noctal==0 && opmode<=2)) // 8 = examine previous
+  { if (kbmode==2) ; //
+    else if (kbkey==8) octaladdress--;
+    else if (noctal==0) octaladdress++;
+    else if (noctal==1 && octalval<4) octaladdress = 0xfffc + (octalval&3);
+    else octaladdress = octalval;
+    lcd.setCursor(0,0);
+    if (opmode==1)
       lcdPrintDecimal(octaladdress); 
-      lcd.print(":"); 
-      lcd.print(octalval);
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      stopNova();
-      if (octaladdress<0xfffc) 
-      { lcd.print("      :"); 
-        lcd.print(lcdPrintDisas(examine(octaladdress), 8));
-      }
-      else 
-      { lcd.print("ac");
-        lcd.print(octaladdress-0xfffc);
-      }
-      printHelp("decimal mode # = store; * = cancel");
-      //lcd.setCursor(6+noctal,0);
-      lcd.noCursor();
-    }
-    else if (kbkey==12 && kbmode==2 && (opmode==0 or opmode==2))  // # = edit mode deposit
-    { if (opmode==2) octalval=packassemble(octalval);
-      stopNova();
-      deposit(octaladdress, octalval);
-      lcd.setCursor(0,0);
+    else
       lcdPrintOctal(octaladdress); 
-      lcd.print("<"); 
-      lcdPrintOctal(examine(octaladdress));
-      lcd.print(makespc(40)); 
-      kbmode=1;
-      noctal=0;
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      if (octaladdress<0xfffc) 
-      { lcd.print("      <");
-        lcd.print(lcdPrintDisas(examine(octaladdress), 8));
-      }
-      else 
-      { lcd.print(" ac");
-        lcd.print(octaladdress-0xfffc);
-      }
-      printHelp("");
-      lcd.noCursor();
-    }
-    else if (kbkey==12 && kbmode==2 && opmode==1)   // # = decimal mode deposit
-    { stopNova();
-      deposit(octaladdress, octalval);
-      lcd.setCursor(0,0);
-      lcdPrintDecimal(octaladdress); 
-      lcd.print("<"); 
+    stopNova();
+    lcd.print(":"); 
+    if (opmode==1)
       lcdPrintDecimal(examine(octaladdress));
-      lcd.print(makespc(40)); 
-      kbmode=1;
-      noctal=0;
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      if (octaladdress>=0xfffc) 
-      { lcd.print(" ac");
-        lcd.print(octaladdress-0xfffc);
+    else
+      lcdPrintOctal(examine(octaladdress));
+    lcd.print(makespc(40)); 
+    kbmode=1;
+    noctal=0;
+    octalval=0;
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    if (octaladdress<0xfffc) 
+    { lcd.print("      :"); 
+      lcd.print(lcdPrintDisas(examine(octaladdress), 8));
+    }
+    else 
+    { lcd.print("ac");
+      lcd.print(octaladdress-0xfffc);
+    }
+    lcd.noCursor();
+    if (opmode==0 or opmode==2) printHelp("*/8 = next/prev address; # = edit");
+    if (opmode==1) printHelp("* = next address; # = edit");
+    if (opmode==3) printHelp("#=step, 8=step back");
+  }
+  else if (kbkey==12 && kbmode<2 && opmode==0)  // # = start edit mode
+  { kbmode = 2;
+    noctal=0;
+    octalval = examine(octaladdress);
+    lcd.setCursor(0,0);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,0);
+    lcdPrintOctal(octaladdress); 
+    lcd.print(":"); 
+    lcdPrintOctal(octalval);
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    if (octaladdress<0xfffc) 
+    { lcd.print("      :"); 
+      lcd.print(lcdPrintDisas(examine(octaladdress), 8));
+    }
+    else 
+    { lcd.print("ac");
+      lcd.print(octaladdress-0xfffc);
+    }
+    printHelp("8/9 = left/right; # = store; * = cancel");
+    lcd.setCursor(7+noctal,0);
+    lcd.cursor();
+  }
+  else if (kbkey==12 && kbmode<2 && opmode==1)  // # = start decimal edit mode
+  { kbmode = 2;
+    noctal=0;
+    //octalval = examine(octaladdress);
+    octalval=0;
+    lcd.setCursor(0,0);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,0);
+    lcdPrintDecimal(octaladdress); 
+    lcd.print(":"); 
+    lcd.print(octalval);
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    stopNova();
+    if (octaladdress<0xfffc) 
+    { lcd.print("      :"); 
+      lcd.print(lcdPrintDisas(examine(octaladdress), 8));
+    }
+    else 
+    { lcd.print("ac");
+      lcd.print(octaladdress-0xfffc);
+    }
+    printHelp("decimal mode # = store; * = cancel");
+    //lcd.setCursor(6+noctal,0);
+    lcd.noCursor();
+  }
+  else if (kbkey==12 && kbmode==2 && (opmode==0 or opmode==2))  // # = edit mode deposit
+  { if (opmode==2) octalval=packassemble(octalval);
+    stopNova();
+    deposit(octaladdress, octalval);
+    lcd.setCursor(0,0);
+    lcdPrintOctal(octaladdress); 
+    lcd.print("<"); 
+    lcdPrintOctal(examine(octaladdress));
+    lcd.print(makespc(40)); 
+    kbmode=1;
+    noctal=0;
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    if (octaladdress<0xfffc) 
+    { lcd.print("      <");
+      lcd.print(lcdPrintDisas(examine(octaladdress), 8));
+    }
+    else 
+    { lcd.print(" ac");
+      lcd.print(octaladdress-0xfffc);
+    }
+    printHelp("");
+    lcd.noCursor();
+  }
+  else if (kbkey==12 && kbmode==2 && opmode==1)   // # = decimal mode deposit
+  { stopNova();
+    deposit(octaladdress, octalval);
+    lcd.setCursor(0,0);
+    lcdPrintDecimal(octaladdress); 
+    lcd.print("<"); 
+    lcdPrintDecimal(examine(octaladdress));
+    lcd.print(makespc(40)); 
+    kbmode=1;
+    noctal=0;
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    if (octaladdress>=0xfffc) 
+    { lcd.print(" ac");
+      lcd.print(octaladdress-0xfffc);
+    }
+    printHelp("");
+    lcd.noCursor();
+  }
+  else if (kbkey==12 && kbmode<2 && opmode==2)   // # = start assembly mode
+  { stopNova();
+    kbmode = 2;
+    noctal=0;
+    octalval = examine(octaladdress);
+    octalval=unpackassemble(octalval);
+    lcd.setCursor(0,0);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,0);
+    lcdPrintOctal(octaladdress); 
+    lcd.print(":"); 
+    lcdPrintLongOctal(octalval);
+    lcd.setCursor(0,1);
+    lcd.print(makespc(40));
+    lcd.setCursor(0,1);
+    lcd.print("      :"); 
+    lcd.print(lcdPrintMiniDisas(octalval, 8));
+    printAssemblyHelp(octalval, noctal);
+    lcd.setCursor(7+noctal,0);
+    lcd.cursor();
+  }
+  else if (opmode==3 && kbkey==12)      // step instruction
+  { stopNova();
+    prevpc = readAddr() & 0x7fff;
+    kbmode=0;
+    noctal=0;
+    octalval=0;
+    lcd.noCursor();
+    stepNova();
+    lcdPrintDebug();
+    debugging=1;
+  } 
+  else if (opmode==3 && kbkey==8 && debugging)    // 'step back' instruction
+  { stopNova();
+    octaladdress = prevpc;
+    prevpc = octaladdress-1;
+    examine(octaladdress);
+    lcd.setCursor(0,1);
+    lcdPrintDebug(); 
+    lcd.noCursor();
+    kbmode=1;
+    noctal=0;
+    octalval=0;
+    lcd.noCursor();
+  }
+  else if (opmode==5 && kbkey>0)  // io mode
+  { unsigned int a, kb=kbkey;
+    if (kb==10) kb='*';
+    else if (kb==11) kb='0';
+    else if (kb==12) kb='#';
+    else kb='0' + kb;
+    bool runn = readLights()&1;
+    if (runn) a=stopNova();
+    deposit(CHARIN, kb);
+    if (runn) 
+      startNova(a);
+    else 
+    { if (haltInstruction == GETC)
+      { depositAC(0, kb);
+        examine(haltAddress&0x7fff);
+        continueNova();
       }
-      printHelp("");
-      lcd.noCursor();
-    }
-    else if (kbkey==12 && kbmode<2 && opmode==2)   // # = start assembly mode
-    { stopNova();
-      kbmode = 2;
-      noctal=0;
-      octalval = examine(octaladdress);
-      octalval=unpackassemble(octalval);
-      lcd.setCursor(0,0);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,0);
-      lcdPrintOctal(octaladdress); 
-      lcd.print(":"); 
-      lcdPrintLongOctal(octalval);
-      lcd.setCursor(0,1);
-      lcd.print(makespc(40));
-      lcd.setCursor(0,1);
-      lcd.print("      :"); 
-      lcd.print(lcdPrintMiniDisas(octalval, 8));
-      printAssemblyHelp(octalval, noctal);
-      lcd.setCursor(7+noctal,0);
-      lcd.cursor();
-    }
-    else if (opmode==3 && kbkey==12)      // step instruction
-    { stopNova();
-      prevpc = readAddr() & 0x7fff;
-      kbmode=0;
-      noctal=0;
-      octalval=0;
-      lcd.noCursor();
-      stepNova();
-      lcdPrintDebug();
-      debugging=1;
-    } 
-    else if (opmode==3 && kbkey==8 && debugging)    // 'step back' instruction
-    { stopNova();
-      octaladdress = prevpc;
-      prevpc = octaladdress-1;
-      examine(octaladdress);
-      lcd.setCursor(0,1);
-      lcdPrintDebug(); 
-      lcd.noCursor();
-      kbmode=1;
-      noctal=0;
-      octalval=0;
-      lcd.noCursor();
-    }
-    else if (opmode==5 && kbkey>0)  // io mode
-    { unsigned int a, kb=kbkey;
-      if (kb==10) kb='*';
-      else if (kb==11) kb='0';
-      else if (kb==12) kb='#';
-      else kb='0' + kb;
-      bool runn = readLights()&1;
-      if (runn) a=stopNova();
-      deposit(CHARIN, kb);
-      if (runn) 
-        startNova(a);
-      else 
-      { if (haltInstruction == GETC)
-        { depositAC(0, kb);
-          examine(haltAddress&0x7fff);
-          continueNova();
-        }
-        else
-        { examine(haltAddress&0x7fff);
-          continueNovaSw(kb);
-        }
+      else
+      { examine(haltAddress&0x7fff);
+        continueNovaSw(kb);
       }
     }
-    else if (kbmode<3 && kbkey==9)      // select opmode
-    { kbmode = 3;
-      lcd.setCursor(0, 1);
-      lcd.print("0-9=exa dec as dbg su io tst sav lod run");
-      printHelp("Select run mode");
-      while(readKeyBoard()!=0);
-      delay(50);
-      lcd.noCursor();
+  }
+  else if (kbmode<3 && kbkey==9)      // select opmode
+  { kbmode = 3;
+    lcd.setCursor(0, 1);
+    lcd.print("0-9=exa dec as dbg su io tst sav lod run");
+    printHelp("Select run mode");
+    while(readKeyBoard()!=0);
+    delay(50);
+    lcd.noCursor();
+  }
+  else if (kbmode==3 && kbkey>0)      // select opmode
+  { int kb=kbkey;
+    if (kb==11) kb=0;
+    kbmode = 0;
+    if (kb<=8) opmode=kb;
+    if (kb==9) 
+    { if ((readLights()&1)==0)
+      { printHelp(F("RUN")); startNova(octaladdress); return; }
+      else
+      { printHelp(F("STOP")); octaladdress=stopNova(); return; }
     }
-    else if (kbmode==3 && kbkey>0)      // select opmode
-    { int kb=kbkey;
-      if (kb==11) kb=0;
-      kbmode = 0;
-      if (kb<=8) opmode=kb;
-      if (kb==9) { printHelp(F("RUN")); startNova(octaladdress); return; }
-      lcd.setCursor(0, 1);
-      lcd.print(makespc(40));
-      if (opmode==0) printHelp(F("N*=AC NN*=exam mem #=edit 9=setup"));
-      if (opmode==1) printHelp(F("N*=AC NN*=exam mem #=edit dec 9!=setup"));
-      if (opmode==2) printHelp(F("N*=AC NN*=exam mem #=edit asm 9=setup"));
-      if (opmode==3) printHelp(F("debug #=step 8=step back 9=setup"));
-      if (opmode==4) printHelp(F("setup 0=small screen 1=large screen"));
-      if (opmode==5) { printHelp(F("I/O mode 9(long)=exit")); lcd.clear(); }
-      if (opmode==6) { printHelp(F("0=regtest 1=dmp 2-4=mtst 7=pld")); lcd.clear(); }
-      if (opmode==7) { printHelp(F("Save core to eeprom bank N")); lcd.clear(); }
-      if (opmode==8) { printHelp(F("Load core from eeprom bank N")); lcd.clear(); }
-      lcd.noCursor();
+    
+    lcd.setCursor(0, 1);
+    lcd.print(makespc(40));
+    if (opmode==0) printHelp(F("N*=AC NN*=exam mem #=edit 9=setup"));
+    if (opmode==1) printHelp(F("N*=AC NN*=exam mem #=edit dec 9!=setup"));
+    if (opmode==2) printHelp(F("N*=AC NN*=exam mem #=edit asm 9=setup"));
+    if (opmode==3) printHelp(F("debug #=step 8=step back 9=setup"));
+    if (opmode==4) printHelp(F("setup unused"));
+    if (opmode==5) { printHelp(F("I/O mode 9(long)=exit")); lcd.clear(); }
+    if (opmode==6) { printHelp(F("0=regtest 1=dmp 2-4=mtst 7=pld")); lcd.clear(); }
+    if (opmode==7) { printHelp(F("Save core to eeprom bank N")); lcd.clear(); }
+    if (opmode==8) { printHelp(F("Load core from eeprom bank N")); lcd.clear(); }
+    lcd.noCursor();
+  }
+  else if (opmode==4 && kbkey>0)      // setup (not used)
+  { int kb=kbkey;
+    if (kb==11) kb=0;
+    lcd.clear();
+    kbmode = 0;
+    opmode = 0;
+    printHelp("");
+    lcd.noCursor();
+  }
+  else if (opmode==6 && kbkey>0)      // test menu
+  { int kb=kbkey;
+    if (kb==11) kb=0;
+    tests(kb);
+    lcd.clear();
+    kbmode = 0;
+    opmode = 0;
+    printHelp("");
+    lcd.noCursor();
+  }
+  else if (opmode==7 && kbkey>0)      // save core
+  { int kb=kbkey;
+    if (kb==11) kb=0;
+    if (kb<=5)
+    { unsigned int b=0;
+      for (int i=0; i<kb; i++) b += core_lengths[i];
+      for (int i=0; i<core_lengths[kb]; i++) 
+        writeBlocktoEEPROM(b+i, i*64);
     }
-    else if (opmode==4 && kbkey>0)      // setup (not used)
-    { int kb=kbkey;
-      if (kb==11) kb=0;
-      lcd.clear();
-      kbmode = 0;
-      opmode = 0;
-      printHelp("");
-      lcd.noCursor();
+    lcd.clear();
+    kbmode = 0;
+    opmode = 0;
+    printHelp("");
+    lcd.noCursor();
+  }
+  else if (opmode==8 && kbkey>0)      // load core
+  { int kb=kbkey;
+    if (kb==11) kb=0;
+    if (kb<=5)
+    { unsigned int b=0;
+      for (int i=0; i<kb; i++) b += core_lengths[i];
+      for (int i=0; i<core_lengths[kb]; i++) 
+        readBlockfromEEPROM(b+i, i*64);
     }
-    else if (opmode==6 && kbkey>0)      // test menu
-    { int kb=kbkey;
-      if (kb==11) kb=0;
-      tests(kb);
-      lcd.clear();
-      kbmode = 0;
-      opmode = 0;
-      printHelp("");
-      lcd.noCursor();
-    }
-    else if (opmode==7 && kbkey>0)      // save core
-    { int kb=kbkey;
-      if (kb==11) kb=0;
-      if (kb<=5)
-      { unsigned int b=0;
-        for (int i=0; i<kb; i++) b += core_lengths[i];
-        for (int i=0; i<core_lengths[kb]; i++) 
-          writeBlocktoEEPROM(b+i, i*64);
-      }
-      lcd.clear();
-      kbmode = 0;
-      opmode = 0;
-      printHelp("");
-      lcd.noCursor();
-    }
-    else if (opmode==8 && kbkey>0)      // load core
-    { int kb=kbkey;
-      if (kb==11) kb=0;
-      if (kb<=5)
-      { unsigned int b=0;
-        for (int i=0; i<kb; i++) b += core_lengths[i];
-        for (int i=0; i<core_lengths[kb]; i++) 
-          readBlockfromEEPROM(b+i, i*64);
-      }
-      lcd.clear();
-      kbmode = 0;
-      opmode = 0;
-      printHelp("");
-      lcd.noCursor();
-    }
-    else if (kbkey>0)       // unrecognised key
-    { kbmode=0;
-      noctal=0;
-      octalval=0;
-      lcd.noCursor();
-    }
+    lcd.clear();
+    kbmode = 0;
+    opmode = 0;
+    printHelp("");
+    lcd.noCursor();
+  }
+  else if (kbkey>0)       // unrecognised key
+  { kbmode=0;
+    noctal=0;
+    octalval=0;
+    lcd.noCursor();
+  }
 }
 
 // ------------------------------------------------------------
@@ -1760,161 +1780,161 @@ void processkey(short kbkey)
 bool SerialIO=false;                // if set serial is sent/recieved to Nova
 
 void processSerial(int count)
-{     byte b = Serial.read();
-      byte m[50];
-      int a;
+{ byte b = Serial.read();
+  byte m[50];
+  int a;
 
-      if (SerialIO or opmode==5) 
-      { if (b=='@') 
-        { SerialIO=false;
-          opmode=0;
-          Serial.println("interactive mode");
+  if (SerialIO or opmode==5) 
+  { if (b=='@') 
+    { SerialIO=false;
+      opmode=0;
+      Serial.println("interactive mode");
+    }
+    else
+    { bool runn = readLights()&1;
+      if (runn) a=stopNova();
+      deposit(CHARIN, b);
+      if (runn) 
+       startNova(a);
+      else 
+      { if (haltInstruction == GETC)
+        { depositAC(0, b);
+          examine(haltAddress&0x7fff);
+          continueNova();
         }
         else
-        { bool runn = readLights()&1;
-          if (runn) a=stopNova();
-          deposit(CHARIN, b);
-          if (runn) 
-           startNova(a);
-          else 
-          { if (haltInstruction == GETC)
-            { depositAC(0, b);
-              examine(haltAddress&0x7fff);
-              continueNova();
-            }
-            else
-            { examine(haltAddress&0x7fff);
-              continueNovaSw(b);
-            }
-          }
+        { examine(haltAddress&0x7fff);
+          continueNovaSw(b);
         }
       }
-      else
-        switch(b)
-      { case 'T': resetNova(); // fall through to stop io mode
-        case 'S': stopNova(); 
-                  if(SerialIO or opmode==5) 
-                  { Serial.println("interactive mode");
-                    SerialIO=false; opmode=0; 
-                  }  
-                  break;
-        case 'I': stepNova(); break;
-        case 'Y': memstepNova(); break;
-        case 'O': continueNova(); break;
-        case 'o': Serial.readBytes(m, 4); // continue put data on switches
-                  continueNovaSw(makehex(m)); 
-                  break;
-        case 'N': interruptNova(); break;
-        case 'G': Serial.readBytes(m, 4);
-                  startNova(makehex(m));
-                  break;
-        case 'M': Serial.readBytes(m, 4); // read one Memory location 
-                  Serial.println(toHex(examine(makehex(m)))); 
-                  break;
-        case 'D': Serial.readBytes(m, 8); // Deposit one memory location
-                  deposit(makehex(m), makehex(m+4)); break;
-        case 'E': Serial.readBytes(m, 1); // Examine AC
-                  Serial.println(toHex(examineAC(m[0]-'0'))); break;
-        case 'F': Serial.readBytes(m, 5); // Fill AC
-                  depositAC(m[0]-'0', makehex(m+1)); break;
-        case 'X': Serial.readBytes(m, 1); // Read frontpanel LEDs
-                  if (m[0]=='0') Serial.println(toHex(readData())); 
-                  if (m[0]=='1') Serial.println(toHex(readAddr())); 
-                  if (m[0]=='2') Serial.println(toHex(readLights())); 
-                  break;
-        case 'L': {int l=Serial.readBytesUntil(0x0d, m, 42); // write LCD text
-                  if (m[0]=='0') 
-                  { lcd.setCursor(0, m[1]-'0');
-                    lcd.print(makespc(40));
-                    lcd.setCursor(0, m[1]-'0');
-                    for (int i=2; i<l; i++) lcd.write(char(m[i]));
-                  }
-                  if (m[0]=='1') 
-                  { lcd2.setCursor(0, m[1]-'0');
-                    lcd2.print(makespc(40));
-                    lcd2.setCursor(0, m[1]-'0');
-                    for (int i=2; i<l; i++) lcd2.write(char(m[i]));
-                  }
-                  break;
-                  }
-        case ':': { // write set of memory locations
-                  Serial.readBytes(m, 6);
-                  unsigned int n = makehex(m)>>8;
-                  unsigned int a=makehex(m+2);
-                  Serial.readBytes(m, n*4); 
-                  for (int i=0; i<n; i++) deposit(a++, makehex(m+i*4));
-                  break;
-                  }
-        case '?': { // read set of memory locations
-                  Serial.readBytes(m, 6);
-                  unsigned int n = makehex(m)>>8;
-                  unsigned int a=makehex(m+2);
-                  for (int i=0; i<n; i++) 
-                    if ((i&7)==7) Serial.println(toHex(examine(a++))); 
-                    else Serial.print(toHex(examine(a++)));
-                  break;
-                  }
-        case 'l': { // disassemble memory locations
-                  Serial.readBytes(m, 6);
-                  unsigned int n = makehex(m)>>8;
-                  unsigned int a = makehex(m+2);
-                  for (int i=0; i<n; i++)
-                  { Serial.print(toOct(a));
-                    unsigned int v=examine(a++);
-                    Serial.print(" ");
-                    Serial.print(toOct(v));
-                    Serial.println(lcdPrintDisas(v, OCT));
-                  }
-                  break;
-                  }
-        case 'r': serialDebug(1); // show registers
-                  break;
-        case 'i': serialDebug(2); // instruction step
-                  Serial.println();
-                  stepNova();
-                  break;
-        case 's': serialDebug(1); // debug step; show registers, then execute instruction
-                  serialDebug(2); 
-                  Serial.println();
-                  stepNova();
-                  break;
-        case '/': SerialIO=true; // enter IO mode
-                  Serial.println("IO mode; @=exit");
-                  lcd.setCursor(0, 0);
-                  lcd.print(makespc(40));
-                  lcd.setCursor(0, 1);
-                  lcd.print(makespc(40));
-                  lcd.setCursor(0, 0);
-                  break;
-        case 'e': { // read 128 byte block a from eeprom
-                  Serial.readBytes(m, 4);
-                  unsigned int a=makehex(m);
-                  int deviceaddress = 0x53;                  
-                  if (a>515) deviceaddress+=4;
-                  for (int i=0; i<128; i++)
-                  { String s;
-                    if (a<4) s = toHex2(EEPROM.read(a*128+i));
-                    else     s = toHex2(i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i));
-                    if ((i&15)==15) Serial.println(s); else Serial.print(s);
-                  }
-                  break;
-                  }
-        case 'w': { // write 16 byte part n(0..7) of 128 byte block a to eeprom
-                  Serial.readBytes(m, 5);
-                  unsigned int n = makehex(m)>>12;
-                  unsigned int a=makehex(m+1);
-                  int deviceaddress = 0x53;
-                  if (a>515) deviceaddress+=4;
-                  Serial.readBytes(m, 32);
-                  m[32]=m[33]='0';
-                  for (int i=0; i<16; i++) m[i]=makehex(m+i*2)>>8;
-                  if (a<4) for (int j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
-                  else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, m, 16);
-                  break;
-                  }
-        case 'V': Serial.println("Arduino code Marcel van Herk 20190204");
-                  break;
-        }
+    }
+  }
+  else
+    switch(b)
+  { case 'T': resetNova(); // fall through to stop io mode
+    case 'S': stopNova(); 
+              if(SerialIO or opmode==5) 
+              { Serial.println("interactive mode");
+                SerialIO=false; opmode=0; 
+              }  
+              break;
+    case 'I': stepNova(); break;
+    case 'Y': memstepNova(); break;
+    case 'O': continueNova(); break;
+    case 'o': Serial.readBytes(m, 4); // continue put data on switches
+              continueNovaSw(makehex(m)); 
+              break;
+    case 'N': interruptNova(); break;
+    case 'G': Serial.readBytes(m, 4);
+              startNova(makehex(m));
+              break;
+    case 'M': Serial.readBytes(m, 4); // read one Memory location 
+              Serial.println(toHex(examine(makehex(m)))); 
+              break;
+    case 'D': Serial.readBytes(m, 8); // Deposit one memory location
+              deposit(makehex(m), makehex(m+4)); break;
+    case 'E': Serial.readBytes(m, 1); // Examine AC
+              Serial.println(toHex(examineAC(m[0]-'0'))); break;
+    case 'F': Serial.readBytes(m, 5); // Fill AC
+              depositAC(m[0]-'0', makehex(m+1)); break;
+    case 'X': Serial.readBytes(m, 1); // Read frontpanel LEDs
+              if (m[0]=='0') Serial.println(toHex(readData())); 
+              if (m[0]=='1') Serial.println(toHex(readAddr())); 
+              if (m[0]=='2') Serial.println(toHex(readLights())); 
+              break;
+    case 'L': {int l=Serial.readBytesUntil(0x0d, m, 42); // write LCD text
+              if (m[0]=='0') 
+              { lcd.setCursor(0, m[1]-'0');
+                lcd.print(makespc(40));
+                lcd.setCursor(0, m[1]-'0');
+                for (int i=2; i<l; i++) lcd.write(char(m[i]));
+              }
+              if (m[0]=='1') 
+              { lcd2.setCursor(0, m[1]-'0');
+                lcd2.print(makespc(40));
+                lcd2.setCursor(0, m[1]-'0');
+                for (int i=2; i<l; i++) lcd2.write(char(m[i]));
+              }
+              break;
+              }
+    case ':': { // write set of memory locations
+              Serial.readBytes(m, 6);
+              unsigned int n = makehex(m)>>8;
+              unsigned int a=makehex(m+2);
+              Serial.readBytes(m, n*4); 
+              for (int i=0; i<n; i++) deposit(a++, makehex(m+i*4));
+              break;
+              }
+    case '?': { // read set of memory locations
+              Serial.readBytes(m, 6);
+              unsigned int n = makehex(m)>>8;
+              unsigned int a=makehex(m+2);
+              for (int i=0; i<n; i++) 
+                if ((i&7)==7) Serial.println(toHex(examine(a++))); 
+                else Serial.print(toHex(examine(a++)));
+              break;
+              }
+    case 'l': { // disassemble memory locations
+              Serial.readBytes(m, 6);
+              unsigned int n = makehex(m)>>8;
+              unsigned int a = makehex(m+2);
+              for (int i=0; i<n; i++)
+              { Serial.print(toOct(a));
+                unsigned int v=examine(a++);
+                Serial.print(" ");
+                Serial.print(toOct(v));
+                Serial.println(lcdPrintDisas(v, OCT));
+              }
+              break;
+              }
+    case 'r': serialDebug(1); // show registers
+              break;
+    case 'i': serialDebug(2); // instruction step
+              Serial.println();
+              stepNova();
+              break;
+    case 's': serialDebug(1); // debug step; show registers, then execute instruction
+              serialDebug(2); 
+              Serial.println();
+              stepNova();
+              break;
+    case '/': SerialIO=true; // enter IO mode
+              Serial.println("IO mode; @=exit");
+              lcd.setCursor(0, 0);
+              lcd.print(makespc(40));
+              lcd.setCursor(0, 1);
+              lcd.print(makespc(40));
+              lcd.setCursor(0, 0);
+              break;
+    case 'e': { // read 128 byte block a from eeprom
+              Serial.readBytes(m, 4);
+              unsigned int a=makehex(m);
+              int deviceaddress = 0x53;                  
+              if (a>515) deviceaddress+=4;
+              for (int i=0; i<128; i++)
+              { String s;
+                if (a<4) s = toHex2(EEPROM.read(a*128+i));
+                else     s = toHex2(i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i));
+                if ((i&15)==15) Serial.println(s); else Serial.print(s);
+              }
+              break;
+              }
+    case 'w': { // write 16 byte part n(0..7) of 128 byte block a to eeprom
+              Serial.readBytes(m, 5);
+              unsigned int n = makehex(m)>>12;
+              unsigned int a=makehex(m+1);
+              int deviceaddress = 0x53;
+              if (a>515) deviceaddress+=4;
+              Serial.readBytes(m, 32);
+              m[32]=m[33]='0';
+              for (int i=0; i<16; i++) m[i]=makehex(m+i*2)>>8;
+              if (a<4) for (int j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
+              else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, m, 16);
+              break;
+              }
+    case 'V': Serial.println("Arduino code Marcel van Herk " __DATE__);
+              break;
+    }
 }
 
 // adapted from I2C eeprom library from https://playground.arduino.cc/code/I2CEEPROM
@@ -1922,44 +1942,42 @@ void processSerial(int count)
  
 // WARNING: address is a page address, 6-bit end will wrap around
 // also, data can be maximum of about 30 bytes, because the Wire library has a buffer of 32 bytes
-void i2c_eeprom_write_page(int deviceaddress, unsigned int eeaddresspage, byte* data, byte length ) {
-    Wire.begin();
-    Wire.beginTransmission(deviceaddress);
-    Wire.write((int)(eeaddresspage >> 8)); // MSB
-    Wire.write((int)(eeaddresspage & 0xFF)); // LSB
-    byte c;
-    for ( c = 0; c < length; c++)
-        Wire.write(data[c]);
-    Wire.endTransmission();
-    delay(5);
-    Wire.end();
+void i2c_eeprom_write_page(int deviceaddress, unsigned int eeaddresspage, byte* data, byte length ) 
+{ Wire.begin();
+  Wire.beginTransmission(deviceaddress);
+  Wire.write((int)(eeaddresspage >> 8)); // MSB
+  Wire.write((int)(eeaddresspage & 0xFF)); // LSB
+  for (byte c = 0; c < length; c++)
+    Wire.write(data[c]);
+  Wire.endTransmission();
+  delay(5);
+  Wire.end();
 }
 
 // maybe let's not read more than 30 or 32 bytes at a time!
-void i2c_eeprom_read_buffer(int deviceaddress, unsigned int eeaddress, byte *buffer, int length ) {
-    Wire.begin();
-    Wire.beginTransmission(deviceaddress);
-    Wire.write((int)(eeaddress >> 8)); // MSB
-    Wire.write((int)(eeaddress & 0xFF)); // LSB
-    Wire.endTransmission();
-    Wire.requestFrom(deviceaddress,length);
-    int c = 0;
-    for ( c = 0; c < length; c++ )
-        if (Wire.available()) buffer[c] = Wire.read();
-    Wire.end();
+void i2c_eeprom_read_buffer(int deviceaddress, unsigned int eeaddress, byte *buffer, int length ) 
+{ Wire.begin();
+  Wire.beginTransmission(deviceaddress);
+  Wire.write((int)(eeaddress >> 8)); // MSB
+  Wire.write((int)(eeaddress & 0xFF)); // LSB
+  Wire.endTransmission();
+  Wire.requestFrom(deviceaddress,length);
+  for (int c = 0; c < length; c++ )
+    if (Wire.available()) buffer[c] = Wire.read();
+  Wire.end();
 }
 
-byte i2c_eeprom_read_byte( int deviceaddress, unsigned int eeaddress ) {
-    byte rdata = 0xFF;
-    Wire.begin();
-    Wire.beginTransmission(deviceaddress);
-    Wire.write((int)(eeaddress >> 8)); // MSB
-    Wire.write((int)(eeaddress & 0xFF)); // LSB
-    Wire.endTransmission();
-    Wire.requestFrom(deviceaddress,1);
-    if (Wire.available()) rdata = Wire.read();
-    Wire.end();
-    return rdata;
+byte i2c_eeprom_read_byte( int deviceaddress, unsigned int eeaddress ) 
+{ byte rdata = 0xFF;
+  Wire.begin();
+  Wire.beginTransmission(deviceaddress);
+  Wire.write((int)(eeaddress >> 8)); // MSB
+  Wire.write((int)(eeaddress & 0xFF)); // LSB
+  Wire.endTransmission();
+  Wire.requestFrom(deviceaddress,1);
+  if (Wire.available()) rdata = Wire.read();
+  Wire.end();
+  return rdata;
 }
 
 ////////////////////////////////////////////////////////////////////////
@@ -1988,6 +2006,7 @@ int kbkey=0;                        // detected key 1..12 on keypad
 int lcdpos=0;
 bool clearline=false;
 
+// write character to LCD interpreting minimal control codes
 void putLCD(byte b)
 { lcdpos = lcdpos % 160;
   if      (b==12) { lcd.clear(); lcd2.clear(); lcdpos=0; }
@@ -2015,11 +2034,12 @@ void putLCD(byte b)
   }
 }
 
-void readBlockfromEEPROM(int block, unsigned int A2)
+// read 128 byte block from EEPROM to Nova memory A
+void readBlockfromEEPROM(int block, unsigned int A)
 { if (block<4)
   { unsigned int address=block*128;
     for (int i=0; i<64; i++)
-    { deposit(A2+i, EEPROM.read(address+i*2)<<8|EEPROM.read(address+i*2+1));
+    { deposit(A+i, EEPROM.read(address+i*2)<<8|EEPROM.read(address+i*2+1));
     }
   }
   else
@@ -2027,16 +2047,17 @@ void readBlockfromEEPROM(int block, unsigned int A2)
     if (block>515) deviceaddress+=4;
     unsigned int address=(block-4)*128; // overflow is OK needs 16 bit
     for (int i=0; i<64; i++)
-    { deposit(A2+i, i2c_eeprom_read_byte(deviceaddress, address+i*2)<<8|i2c_eeprom_read_byte(deviceaddress, address+i*2+1));
+    { deposit(A+i, i2c_eeprom_read_byte(deviceaddress, address+i*2)<<8|i2c_eeprom_read_byte(deviceaddress, address+i*2+1));
     }
   }
 }
 
-void writeBlocktoEEPROM(int block, unsigned int A2)
+// write 128 byte block from EEPROM to Nova memory A
+void writeBlocktoEEPROM(int block, unsigned int A)
 { if (block<4)
   { int address=block*128;
     for (int i=0; i<64; i++)
-    { unsigned short s=examine(A2+i);
+    { unsigned short s=examine(A+i);
       EEPROM.write(address+i*2, s>>8);
       EEPROM.write(address+i*2+1, s&255);
     }
@@ -2048,7 +2069,7 @@ void writeBlocktoEEPROM(int block, unsigned int A2)
     byte buffer[26];
     for (int j=0; j<8; j++)
     { for (int i=0; i<8; i++)
-      { unsigned short s=examine(A2+j*8+i);
+      { unsigned short s=examine(A+j*8+i);
         buffer[i*2]=s>>8;
         buffer[i*2+1]=s&255;
       }
@@ -2062,7 +2083,7 @@ void writeBlocktoEEPROM(int block, unsigned int A2)
 void loop() {
   unsigned long currentMillis = millis();
 
-  // wait but also detect halt condition
+  // wait and detect halt condition; special bits in HALT are interpreted as 'OS' instructions
   while (millis() - currentMillis < 100)
   { bool runLight = readLights()&1;
     if (novaRunning && !runLight) {
