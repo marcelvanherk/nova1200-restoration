@@ -54,6 +54,8 @@
 // mvh 20190203 Added ADDRESS, LETTERS and LABEL assembly; added MESSAGE and test program
 // mvh 20190203 Made 24LC1025 eeprom work
 // mvh 20190204 EEPROM core bank 0=512 byte (fits arduino), 1-4=8kw, 5=32kw (total 128kb to fit 24LC1025)
+// mvh 20190205 Fix LABEL code; show compile date; mem size on start; layout; removed superfluous &15
+//              Assembly code no longer adjusted for broken D14 (value 2)
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
