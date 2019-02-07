@@ -56,6 +56,11 @@
 // mvh 20190204 EEPROM core bank 0=512 byte (fits arduino), 1-4=8kw, 5=32kw (total 128kb to fit 24LC1025)
 // mvh 20190205 Fix LABEL code; show compile date; mem size on start; layout; removed superfluous &15
 //              Assembly code no longer adjusted for broken D14 (value 2)
+// mvh 20190206 Removed some dead code (Arduino very close to full!)
+// mvh 20190207 Added '.' Serial, fix e.g. 1# and 123# on keyboard, now directly edits value
+//              INFO shows standard debug information
+//              Assembler: Added DW, DB, ORG, LDAL, STAL, ISZL and DSZL and AUTO label;
+//              Do not output END, allow LABEL+IND
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -70,12 +75,12 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #endif
 
 // very mini assembler for nova
+#define LDA(d, a) (020000+(d<<11)+(a&0xff))
+#define STA(d, a) (040000+(d<<11)+(a&0xff))
+#define JMP(a)    (000000+(a&0xff))
+#define JSR(a)    (004000+(a&0xff))
 #define ISZ(a)    (010000+(a&0xff))
 #define DSZ(a)    (014000+(a&0xff))
-#define STA(d, a) (040000+(d<<11)+(a&0xff))
-#define LDA(d, a) (020000+(d<<11)+(a&0xff))
-#define JMP(a)    (000000+(a&0xff))
-#define JSR(a)    (040000+(a&0xff))
 #define COM(s, d) (0100000+(s<<13)+(d<<11))
 #define NEG(s, d) (0100400+(s<<13)+(d<<11))
 #define MOV(s, d) (0101000+(s<<13)+(d<<11))
@@ -120,27 +125,41 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 
 // any constant in output
 #define CONSTANT(a) ((a)&0xffff)
+#define DW(a)       ((a)&0xffff)
 #define LETTERS(a, b) (a*256+b)
+#define DB(a, b)      (a*256+b)
 
-// label mechanism (labels 0..9 supported)
-#define END        063777   // rarely used instructions
-#define LABEL(a)   064777,a // store label[a]
-#define JMPL(a)    065777,a // JMP to label[a]
-#define JSRL(a)    066777,a // JSR to label[a]
-#define ADDRESS(a) 067777,a // Output address of label[a] as constant
+// use rarely used instructions to code specials
+#define ORG(a)     060777,a // Locate next code at address a
+#define END        067777   
+
+// label mechanism (labels 0..19 supported, or AUTO+n)
+#define LABEL(a)   061777,a // store label[a]
+
+#define ADDRESS(a) 062777,a // Output address of label[a] as constant
+#define JMPL(a)    063770,a // JMP to label[a]
+#define JSRL(a)    063771,a // JSR to label[a]
+#define ISZL(a)    063772,a // ISZ label[a]
+#define DSZL(a)    063773,a // DSZ label[a]
+#define LDAL(r, a) 064770+(r),a // LDA r from label[a]
+#define STAL(r, a) 064774+(r),a // STA r to label[a]
+
+#define AUTO       01000   // AUTO, AUTO+1: automatic variables, only allowed in LABEL instructions, also +IND is allowed
 
 // Addresses for memory mapped I/O
 #define CHARIN 040   // input to nova
 #define CHAROUT 042  // output from nova
 
 // System calls (these all are functional HALT instructions, interpreted by Arduino program)
-#define INFO       077377 // show information (A0 A1 for now) on LCD
+#define INFO       077377 // show debug information on LCD
 #define PUTC       077277 // output character to LCD and serial
 #define GETC       077177 // get character from serial (/ mode) or keypad (9-5 mode)
-#define READBLOCK  077077 // read 64 word block A0 to address A2
-#define WRITEBLOCK 073377 // write 64 word block A0 from address A2
+#define READBLOCK  077077 // read 64 word block A0 from device (EEPROM) to address A2
+#define WRITEBLOCK 073377 // write 64 word block A0 to device (EEPROM) from address A2
 #define WRITELED   073277 // A0 bit 0 sets Arduino LED
 #define MESSAGE    073177 // Write text string with %0..%3 substituted for AC0..3
+// 8 are open 073077 and 06[3,7][1-3]77 except 063077; maybe add 
+// HWMUL, HWDIV, DEVICESEL, GPIO, SKIPBUSY, SKIPDONE, SKIPNOTBUSY, SKIPNOTDONE
 
 // test assembly program for switch based input
 unsigned short prog1[]={
@@ -159,7 +178,7 @@ unsigned short prog1[]={
   LDA(2, 2)+PC,    // delay: load constant
   SKIP,            // skip constant
   CONSTANT(65532),
-  INC(2,2)+SNC,    // loop 65535 times
+  INC(2,2)+SZR,    // loop 65535 times
   JMP(-1)+PC,
   INTDS,           // ION light OFF
   
@@ -172,14 +191,14 @@ unsigned short prog1[]={
   LDA(2, 2)+PC,    // delay
   SKIP,
   CONSTANT(65530),
-  INC(2,2)+SNC,
+  INC(2,2)+SZR,
   JMP(-1)+PC,
   INTEN,          // ION light ON
   
   LDA(2, 2)+PC,   // delay
   SKIP,
   CONSTANT(65530),
-  INC(2,2)+SNC,
+  INC(2,2)+SZR,
   JMP(-1)+PC,
 */
   INTDS,          // ION light OFF
@@ -211,65 +230,95 @@ unsigned short prog4[]={
   SKIP,
   ADDRESS(0),
   MESSAGE,
+  //LABEL(1),
   HALT,
   LABEL(0),
-  LETTERS('1', '2'),
-  LETTERS('3', '4'),
-  LETTERS(0, 0),
+  LETTERS('H', 'e'),
+  LETTERS('l', 'l'),
+  LETTERS('o', 0),
+  // assembler tests
+  //JMPL(1),
+  //ISZL(1),
+  //LDAL(2, 1),
+  //STAL(2, 1),
+  //STAL(2, AUTO),
+  //STAL(2, AUTO+IND),
   END
 };
 
 // assemble unsigned short array as above to location 'to' in Nova; interpreting labels
 void assemble(int to, unsigned short *prog)
-{ int i=0, j=to, a;
+{ unsigned int i=0, j=to, a, Auto;
   unsigned short labels[20];
   
   // 2 pass assembler; pass 1 collects labels only
   do
   { a=prog[i];
-    if (a==064777) // define label: 2 input items, no output 
+    if (a==060777) // ORG(a)
+    { j=prog[i+1];
+      i++;
+    }
+    else if (a==061777) // define label: 2 input items, no output 
     { labels[prog[i+1]]=j;
       i++;
     }
-    else if (a==065777 || a==066777 || a==067777) // use label: 2 input, 1 output
-    { i++;
+    else if (a==062777 || (a>=063770 && a<=063773) || (a>=064770 && a<=064777)) // use label: 2 input, 1 output
+    { // if (prog[i+1]>=Auto) nAuto++;
+      i++;
       j++;
     }
-    else
+    else if (a!=END)
       j++;
     i++;
   }
   while (a!=END);
+  Auto=j;
+  // Internal = Auto+nAuto;
 
   // pass 2; outputs code
   i=0; j=to;
   do
   { a=prog[i];
-    if (a==064777)
+    if (a==060777) // org(a)
+    { j=prog[i+1];
       i++;
-    else if (a==065777 || a==066777) // relative or page 0 jump 
-    { short target=labels[prog[i+1]];
+    }
+    else if (a==061777) // ignore label definition
+      i++;
+    else if (a==062777)  // output label addresss
+    { deposit(j++, labels[prog[i+1]]);
+      i++;
+    }
+    else if ((a>=063770 && a<=063773) || (a>=064770 && a<=064777)) // relative or page 0 jumps, isz/dsz, load or store
+    { int target;
+      unsigned int Ind = prog[i+1]&IND;
+      if (prog[i+1]>=AUTO) target=Auto+  (prog[i+1]&(AUTO-1)); // e.g. STAL(0, AUTO))
+      else                 target=labels[(prog[i+1]&(AUTO-1))];
+
       if (target<256)                // page 0
-      { if (a==065777) deposit(j++, 0+target);
-        else           deposit(j++, 040000+target);
+      { target = target+Ind;
+        if (a>=063770 && a<=063773) deposit(j++,        04000*(a&3)+target);
+        else                        deposit(j++, 020000+04000*(a&7)+target);
       }                             // PC relative
-      else if (target-j>-127 && target-j<127)
-      { target = target-j;
-        if (a==065777) deposit(j++, 0400+(target&255));
-        else           deposit(j++, 040400+(target&255));
-      }
+      else if (target-(signed)j>-127 && target-(signed)j<127)
+      { target = target-(signed)j;
+        target = (target & 255) + Ind;
+        if (a>=063770 && a<=063773) deposit(j++,   0400+04000*(a&3)+target);
+        else                        deposit(j++, 020400+04000*(a&7)+target);
+      }                             // out of range
       else
-      { lcd.print("Error: JMP/JSR range");
+      { lcd.print("RANGE");
+        //lcd.print(" @");
+        //lcd.print(j, 8);
+        //lcd.print(" to ");
+        //lcd.print(target, 8);
         deposit(j++, 017777);
+        delay(1000);
         return;
       }
       i++;
     }
-    else if (a==067777)  // output label addresss
-    { deposit(j++, labels[prog[i+1]]);
-      i++;
-    }
-    else
+    else if (a!=END)
       deposit(j++, a);
     i++;
   }
@@ -390,18 +439,18 @@ void setup() {
   printHelp(F("This computer was manufactured in 1971"));
 
   Serial.begin(115200);     // usb serial for debug output
-  Serial.setTimeout(4000);  // give me some time to type
+  //Serial.setTimeout(4000);  // give me some time to type
 }
 
-void writeData(int d)			// set data register
-{ WriteReg(0, d&15);        // data L
+void writeData(int d)    // set data register
+{ WriteReg(0, d&15);     // data L
   WriteReg(1, (d>>4));   // data H
   WriteReg(8, (d>>8));   // data L brd2
   WriteReg(9, (d>>12));  // data H brd2
 }
 
-void writeInst(int i)			// set instruction register (only 8 MSB bits used, reg 2 and 3 ignored)
-{ WriteReg(14, i);   // data L brd2
+void writeInst(int i)    // set instruction register (only 8 MSB bits used, reg 2 and 3 ignored)
+{ WriteReg(14, i);       // data L brd2
   WriteReg(15, (i>>4));  // data H brd2
 }
 
@@ -530,7 +579,7 @@ unsigned int interruptNova(void)
   byte s=(PORTB&0xF0)|(4);
   PORTB = s|3;
   PORTB = s|2;
-  delayMicroseconds(10); 
+  wait(); 
   PORTB = s|3; 
 }
 
@@ -578,7 +627,7 @@ void stepNova(void)
   WriteReg(10, 9);
   WriteReg(11, 6);
   wait();
-  Serial.println("instruction step");
+  Serial.println(F("instruction step"));
   WriteReg(11, 0);
   WriteReg(10, 8);
 }
@@ -943,18 +992,18 @@ void printAssemblyHelp(unsigned long v, int noctal)
   if (noctal==1 && type==7) printHelp(F("IO status 0=skip"));
 
   if (noctal==2 && (type==1||type==3)) 
-                            printHelp(F("accumulator 0..3 = ac0..ac3"));
-  if (noctal==2 && type==5) printHelp(F("source accumulator 0..3 = ac0..ac3"));
+                            printHelp(F("accu 0..3 = ac0..ac3"));
+  if (noctal==2 && type==5) printHelp(F("source accu 0..3 = ac0..ac3"));
 
   if (noctal==3 && type>=2 && type<=4) 
-                            printHelp(F("0=abs 1=pc+ 2=ac2+ 3=ac3+ +4=indirect"));
-  if (noctal==3 && type==5) printHelp(F("destination accumulator 0..3 = ac0..ac3"));
-  if (noctal==3 && type==6) printHelp(F("IO function 0=none 1=set 2=clear 3=pulse"));
-  if (noctal==3 && type==7) printHelp(F("skip 0=busy 1=nonbusy 2=done 3=notdone"));
+                            printHelp(F("0=abs 1=pc+ 2=ac2+ 3=ac3+ +4=@"));
+  if (noctal==3 && type==5) printHelp(F("dest accu 0..3 = ac0..ac3"));
+  if (noctal==3 && type==6) printHelp(F("IO func 0=none 1=set 2=clr 3=puls"));
+  if (noctal==3 && type==7) printHelp(F("skip 0=busy 1=!busy 2=done 3=!done"));
   
-  if (noctal==4 && type==5) printHelp(F("shift 0=none 1=L 2=R 3=byte swap"));
+  if (noctal==4 && type==5) printHelp(F("shift 0=none 1=L 2=R 3=bswap"));
   if (noctal==5 && type==5) printHelp(F("carry 0=as is 1=Z 2=O 3=C +4=noload"));
-  if (noctal==6 && type==5) printHelp(F("skip 0..7=never always NC C Z NZ NCZ CZ"));
+  if (noctal==6 && type==5) printHelp(F("skip 0..7=no yes NC C Z NZ NCZ CZ"));
   
   if (noctal>=4 && type>1 && type<=4) 
                             printHelp(F("offset +0..177 pos 377..200 neg"));
@@ -981,7 +1030,7 @@ void lcdPrintDebug(void) {
   if (carry)
     lcd.print("C");
   else
-    lcd.print("C");
+    lcd.print(".");
   in = examine(pc);
   lcd.setCursor(0,1);
   lcdPrintOctal(pc);    // print address
@@ -1083,7 +1132,8 @@ void serialDebug(int mode) {
       if (b>0) Serial.print(toOct(t));
   
       for (int i=0; i<indirect; i++)
-      { do t=examine(t); while (t&0x8000);
+      { if (b>3) do t=examine(t); while (t&0x8000);
+        else t=examine(t);
       }
            
       if (indirect)
@@ -1278,6 +1328,7 @@ void tests(int func)
     assemble(050, prog2);
     assemble(060, prog3);
     assemble(070, prog4);
+    // assemble(0400, prog4); // force PC relative addressing
     lcd.setCursor(0,1);
     lcd.print("loaded prog1..4");
     delay(200);
@@ -1495,7 +1546,9 @@ void processkey(short kbkey)
     if (opmode==3) printHelp("#=step, 8=step back");
   }
   else if (kbkey==12 && kbmode<2 && opmode==0)  // # = start edit mode
-  { kbmode = 2;
+  { if (kbmode==1 && noctal==1 && octalval<4) octaladdress = 0xfffc + (octalval&3);
+    else if (kbmode==1 && noctal>=1) octaladdress=octalval; // allow e.g. 123#: edit 123
+    kbmode = 2;
     noctal=0;
     octalval = examine(octaladdress);
     lcd.setCursor(0,0);
@@ -1650,11 +1703,11 @@ void processkey(short kbkey)
     else 
     { if (haltInstruction == GETC)
       { depositAC(0, kb);
-        examine(haltAddress&0x7fff);
+        examine(haltAddress);
         continueNova();
       }
       else
-      { examine(haltAddress&0x7fff);
+      { examine(haltAddress);
         continueNovaSw(kb);
       }
     }
@@ -1801,11 +1854,11 @@ void processSerial(int count)
       else 
       { if (haltInstruction == GETC)
         { depositAC(0, b);
-          examine(haltAddress&0x7fff);
+          examine(haltAddress);
           continueNova();
         }
         else
-        { examine(haltAddress&0x7fff);
+        { examine(haltAddress);
           continueNovaSw(b);
         }
       }
@@ -1934,6 +1987,7 @@ void processSerial(int count)
               else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, m, 16);
               break;
               }
+    case '.': Serial.println("."); // acknowledge
     case 'V': Serial.println("Arduino code Marcel van Herk " __DATE__);
               break;
     }
@@ -1997,12 +2051,12 @@ short lowvals[10]  = {448, 560,   338, 672,    227,  784,   118,    950,    3276
 short lowinst[10]  = {0xfb, 0xfb, 0xdd, 0xdc,  0xf9, 0xfc,  0xff,   0xff,    0,   0xfd}; 
 short lowfuncs[10] = {1,   23,    1,    1,     1,       1,  21,     22,      0,    7};    
                      //4,5,6,7= N/A memstep instep pl, +16 generate con+ signal
+unsigned long keydownMillis = 0;    // will store time frontpanel key was pressed
 #endif
 
 const long interval = 1;            // interval at which to process (milliseconds)
 int keyon = 0;                      // set when key is down
 unsigned long previousMillis = 0;   // will store last time LED was updated
-unsigned long keydownMillis = 0;    // will store time frontpanel key was pressed
 unsigned long kbMillis = 0xfffffff; // will store time keypad key was pressed
 int kbkey=0;                        // detected key 1..12 on keypad
 int lcdpos=0;
@@ -2089,20 +2143,22 @@ void loop() {
   while (millis() - currentMillis < 100)
   { bool runLight = readLights()&1;
     if (novaRunning && !runLight) {
-      haltAddress     = readAddr();
-      haltInstruction = examine((haltAddress&0x7fff)-1);
+      haltAddress     = readAddr() & 0x7fff;
+      haltInstruction = examine(haltAddress-1);
       haltA0          = examineAC(0);
       novaRunning     = false;
-      examine(haltAddress&0x7fff);
+      examine(haltAddress);
 
       if (haltInstruction==INFO)
-      { lcd.setCursor(31, 1);
+      { lcdPrintDebug();
+        /* lcd.setCursor(31, 1);
         lcdPrintHex(haltA0);
         lcd.print(" ");
         lcdPrintHex(examineAC(1));
         lcd.setCursor(lcdpos%40, floor(lcdpos/40));
         lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
-        examine(haltAddress&0x7fff);
+        */
+        examine(haltAddress);
         continueNova();
         break;
       }
@@ -2110,7 +2166,7 @@ void loop() {
       { byte b=haltA0&255;
         Serial.write(b);
         putLCD(b);
-        examine(haltAddress&0x7fff);
+        examine(haltAddress);
         continueNova();
       }
       else if (haltInstruction==MESSAGE) // write character string from address in A2
@@ -2129,7 +2185,7 @@ void loop() {
           else Serial.write(b);
           putLCD(b);
         }
-        examine(haltAddress&0x7fff);
+        examine(haltAddress);
         continueNova();
       }
       else if (haltInstruction==WRITELED)
@@ -2141,7 +2197,7 @@ void loop() {
         digitalWrite(13, (haltA0&1)!=0);
         delay(50); // must be shorter than 100 ms above!
         digitalWrite(13, 0);
-        examine(haltAddress&0x7fff);
+        examine(haltAddress);
         continueNova();
       }
       else if (haltInstruction==READBLOCK) // stored BIGENDIAN in eeprom
@@ -2149,7 +2205,7 @@ void loop() {
         readBlockfromEEPROM(haltA0, A2);
         depositAC(0, haltA0+1);
         depositAC(2, A2+64);
-        examine(haltAddress&0x7fff);
+        examine(haltAddress);
         continueNova();
       }
       else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
@@ -2157,7 +2213,7 @@ void loop() {
         writeBlocktoEEPROM(haltA0, A2);
         depositAC(0, haltA0+1);
         depositAC(2, A2+64);
-        examine(haltAddress&0x7fff);
+        examine(haltAddress);
         continueNova();
       }
       else if (haltInstruction==GETC)
@@ -2298,7 +2354,6 @@ void loop() {
         if (!debugging) lcd.print(makespc(24));
       }
     }
-#endif
 
     // auto repeat all functions after 1 second
     if (func!=0 && millis()-keydownMillis > 1000)
@@ -2439,5 +2494,6 @@ void loop() {
     }
     else if (func==0)
       keyon=0;
+#endif
   }
 }
