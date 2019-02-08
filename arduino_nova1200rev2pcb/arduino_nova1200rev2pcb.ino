@@ -61,6 +61,8 @@
 //              INFO shows standard debug information
 //              Assembler: Added DW, DB, ORG, LDAL, STAL, ISZL and DSZL and AUTO label;
 //              Do not output END, allow LABEL+IND
+// mvh 20190208 Added GPIO, also use it to indicate READBLOCK and WRITEBLOCK
+//              Started on SKIPBUSYZ and SKIPDONE
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -158,8 +160,11 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #define WRITEBLOCK 073377 // write 64 word block A0 to device (EEPROM) from address A2
 #define WRITELED   073277 // A0 bit 0 sets Arduino LED
 #define MESSAGE    073177 // Write text string with %0..%3 substituted for AC0..3
-// 8 are open 073077 and 06[3,7][1-3]77 except 063077; maybe add 
-// HWMUL, HWDIV, DEVICESEL, GPIO, SKIPBUSY, SKIPDONE, SKIPNOTBUSY, SKIPNOTDONE
+#define GPIO       073077 // High bits define data direction (O=out), low bits value
+#define SKIPBUSYZ  SKIP   // Always skip
+#define SKIPDONE   067377 // skip when character available
+// 7 are open 06[3,7][1-3]77 except 063077; maybe add 
+// HWMUL, HWDIV, DEVICESEL, SKIPDONE, SKIPBUSYZ (always skip)
 
 // test assembly program for switch based input
 unsigned short prog1[]={
@@ -171,6 +176,7 @@ unsigned short prog1[]={
   //READS(0),        // read input data from switches
   GETC,
   INC(1,1),        // keep track if loop and halt works
+  GPIO,
   // STA(0, CHAROUT), // echo to arduino
   INTEN,           // ION light ON
   //WRITELED,
@@ -847,6 +853,8 @@ String lcdPrintDisas(unsigned int v, int octalmode) {
   else if (v==READBLOCK)        s+=(".READBLOCK");
   else if (v==WRITEBLOCK)       s+=(".WRITEBLOCK");
   else if (v==MESSAGE)          s+=(".MESSAGE");
+  else if (v==GPIO)             s+=(".GPIO");
+  else if (v==SKIPBUSYZ)        s+=(".SKIPBUSYZ");
   else if (v==HALT)             s+=("HALT");    //doc0, 4 bits free
   else if ((v&0xe73f)==0x663f)  s+=(".HALT");   // unused system call
 
@@ -2135,6 +2143,31 @@ void writeBlocktoEEPROM(int block, unsigned int A)
   }
 }
 
+void gpio(unsigned int A)
+{ byte d=A>>8;
+  Wire.begin();
+  Wire.beginTransmission(0x20);
+  Wire.write(0x00);
+  Wire.write(d);        // direction bits
+  Wire.endTransmission();
+  Wire.beginTransmission(0x20);
+  Wire.write(0x09);
+  Wire.write(A);
+  Wire.endTransmission();
+  if (d)
+  { Wire.beginTransmission(0x20);
+    Wire.write(0x06);
+    Wire.write(d);        // pull up resistors (ON for inputs)
+    Wire.endTransmission();
+    Wire.beginTransmission(0x20);
+    Wire.write(0x09);
+    Wire.endTransmission();
+    Wire.requestFrom(0x20, 1);
+    depositAC(0, Wire.read());
+  }
+  Wire.end();
+}
+
 ///////////////////////////////////////// loop ////////////////////////////////////
 void loop() {
   unsigned long currentMillis = millis();
@@ -2202,17 +2235,33 @@ void loop() {
       }
       else if (haltInstruction==READBLOCK) // stored BIGENDIAN in eeprom
       { unsigned int A2=examineAC(2);
+        gpio(1);
         readBlockfromEEPROM(haltA0, A2);
+        depositAC(0, haltA0+1);
+        depositAC(2, A2+64);
+        gpio(0);
+        examine(haltAddress);
+        continueNova();
+      }
+      else if (haltInstruction==SKIPBUSYZ) // skip when character available
+      { if (true)
+          examine(haltAddress+1);
+        else
+          examine(haltAddress);
+        continueNova();
+      }
+      else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
+      { unsigned int A2=examineAC(2);
+        gpio(4);
+        writeBlocktoEEPROM(haltA0, A2);
+        gpio(0);
         depositAC(0, haltA0+1);
         depositAC(2, A2+64);
         examine(haltAddress);
         continueNova();
       }
-      else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
-      { unsigned int A2=examineAC(2);
-        writeBlocktoEEPROM(haltA0, A2);
-        depositAC(0, haltA0+1);
-        depositAC(2, A2+64);
+      else if (haltInstruction==GPIO)     // GPIO through MCP20008
+      { gpio(haltA0);
         examine(haltAddress);
         continueNova();
       }
