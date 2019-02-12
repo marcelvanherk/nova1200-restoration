@@ -63,7 +63,8 @@
 //              Do not output END, allow LABEL+IND
 // mvh 20190208 Added GPIO, also use it to indicate READBLOCK and WRITEBLOCK
 //              Started on SKIPBUSYZ and SKIPDONE
-// mvh 20190212 Added DELAY syscall, changed SKIPDONE, contunue after syscall for speed
+// mvh 20190212 Added DELAY syscall, changed SKIPDONE, continue after syscall for speed
+//              Add multiply routine (tested at 120 us), relocated test programs
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -219,7 +220,26 @@ unsigned short prog2[]={
   SUB(0, 0),
   SUB(2, 2),
   WRITEBLOCK,
+  SUB(2, 2),
+  LABEL(1), /// loop
+  JSRL(2),
+  INC(2,2)+SZR,
+  JMPL(1),
   HALT,
+  LABEL(2),   // MULTIPLY
+  STAL(3, AUTO),
+  LDAL(3, 4), // -16
+  LABEL(3),   // LOOP
+  MOV(1, 1)+SR+SNC,
+  MOV(0, 0)+SR+SKP,
+  ADD(2, 0)+SR,
+  INC(3, 3)+SZR,
+  JMPL(3),
+  MOV(1, 1)+SR,
+  JMPL(AUTO+IND), // RETURN
+  HALT,
+  LABEL(4),
+  CONSTANT(-16),
   END
 };
 
@@ -1345,8 +1365,8 @@ void tests(int func)
   { stopNova();
     assemble(0, prog1);
     assemble(050, prog2);
-    assemble(060, prog3);
-    assemble(070, prog4);
+    assemble(100, prog3);
+    assemble(140, prog4);
     // assemble(0400, prog4); // force PC relative addressing
     lcd.setCursor(0,1);
     lcd.print("loaded prog1..4");
