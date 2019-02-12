@@ -63,6 +63,7 @@
 //              Do not output END, allow LABEL+IND
 // mvh 20190208 Added GPIO, also use it to indicate READBLOCK and WRITEBLOCK
 //              Started on SKIPBUSYZ and SKIPDONE
+// mvh 20190212 Added DELAY syscall, changed SKIPDONE, contunue after syscall for speed
 
 #include <LiquidCrystal.h>
 #include <EEPROM.h>
@@ -161,10 +162,11 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #define WRITELED   073277 // A0 bit 0 sets Arduino LED
 #define MESSAGE    073177 // Write text string with %0..%3 substituted for AC0..3
 #define GPIO       073077 // High bits define data direction (O=out), low bits value
-#define SKIPBUSYZ  SKIP   // Always skip
+#define SKIPBUSYZ  (MOV(3,3)+NOLOAD+SKP) // Always skip
 #define SKIPDONE   067377 // skip when character available
-// 7 are open 06[3,7][1-3]77 except 063077; maybe add 
-// HWMUL, HWDIV, DEVICESEL, SKIPDONE, SKIPBUSYZ (always skip)
+#define DELAY      067277 // Delay A0 ms, showing A1 on lights
+// 6 are open 06[3,7][1-3]77 except 063077; maybe add 
+// HWMUL, HWDIV, DEVICESEL, SKIPBUSYZ (always skip)
 
 // test assembly program for switch based input
 unsigned short prog1[]={
@@ -232,17 +234,25 @@ unsigned short prog3[]={
 };
 
 unsigned short prog4[]={
+  LABEL(3),
+  LDAL(0, 2), 
   LDA(2, 2)+PC,    
   SKIP,
   ADDRESS(0),
   MESSAGE,
-  //LABEL(1),
-  HALT,
+  DELAY,
+  INC(1,1),
+  MOV(1,0),
+  GPIO,
+  JMPL(3),
   LABEL(0),
   LETTERS('H', 'e'),
   LETTERS('l', 'l'),
   LETTERS('o', 0),
+  LABEL(2),
+  CONSTANT(500),
   // assembler tests
+  //LABEL(1),
   //JMPL(1),
   //ISZL(1),
   //LDAL(2, 1),
@@ -855,6 +865,7 @@ String lcdPrintDisas(unsigned int v, int octalmode) {
   else if (v==MESSAGE)          s+=(".MESSAGE");
   else if (v==GPIO)             s+=(".GPIO");
   else if (v==SKIPBUSYZ)        s+=(".SKIPBUSYZ");
+  else if (v==DELAY)            s+=(".DELAY");
   else if (v==HALT)             s+=("HALT");    //doc0, 4 bits free
   else if ((v&0xe73f)==0x663f)  s+=(".HALT");   // unused system call
 
@@ -2180,20 +2191,12 @@ void loop() {
       haltInstruction = examine(haltAddress-1);
       haltA0          = examineAC(0);
       novaRunning     = false;
-      examine(haltAddress);
 
       if (haltInstruction==INFO)
       { lcdPrintDebug();
-        /* lcd.setCursor(31, 1);
-        lcdPrintHex(haltA0);
-        lcd.print(" ");
-        lcdPrintHex(examineAC(1));
-        lcd.setCursor(lcdpos%40, floor(lcdpos/40));
-        lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
-        */
         examine(haltAddress);
         continueNova();
-        break;
+        continue;
       }
       else if (haltInstruction==PUTC) // write character
       { byte b=haltA0&255;
@@ -2201,6 +2204,7 @@ void loop() {
         putLCD(b);
         examine(haltAddress);
         continueNova();
+        continue;
       }
       else if (haltInstruction==MESSAGE) // write character string from address in A2
       { int a = examineAC(2);
@@ -2220,6 +2224,7 @@ void loop() {
         }
         examine(haltAddress);
         continueNova();
+        continue;
       }
       else if (haltInstruction==WRITELED)
       { digitalWrite(6, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
@@ -2232,6 +2237,7 @@ void loop() {
         digitalWrite(13, 0);
         examine(haltAddress);
         continueNova();
+        continue;
       }
       else if (haltInstruction==READBLOCK) // stored BIGENDIAN in eeprom
       { unsigned int A2=examineAC(2);
@@ -2242,6 +2248,7 @@ void loop() {
         gpio(0);
         examine(haltAddress);
         continueNova();
+        continue;
       }
       else if (haltInstruction==SKIPBUSYZ) // skip when character available
       { if (true)
@@ -2249,6 +2256,7 @@ void loop() {
         else
           examine(haltAddress);
         continueNova();
+        continue;
       }
       else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
       { unsigned int A2=examineAC(2);
@@ -2259,11 +2267,20 @@ void loop() {
         depositAC(2, A2+64);
         examine(haltAddress);
         continueNova();
+        continue;
       }
       else if (haltInstruction==GPIO)     // GPIO through MCP20008
       { gpio(haltA0);
         examine(haltAddress);
         continueNova();
+        continue;
+      }
+      else if (haltInstruction==DELAY)   // delay on arduino
+      { examineAC(1); // show ac1 on lights
+        delay(haltA0);
+        examine(haltAddress);
+        continueNova();
+        continue;
       }
       else if (haltInstruction==GETC)
       { break; // handled in serial and keyboard code
