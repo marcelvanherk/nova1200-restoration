@@ -65,8 +65,33 @@
 //              Started on SKIPBUSYZ and SKIPDONE
 // mvh 20190212 Added DELAY syscall, changed SKIPDONE, continue after syscall for speed
 //              Add multiply routine (tested at 120 us), relocated test programs
+// mvh 20190302 Added #TEENSY define for TEENSY3.5, connected to rightsided 24 pins
+//		with USB connector pointing to inside of board, 24 other teensy pins NC 
+// mvh 20190302 Fixed type errors and warnings in Teensy compile
 
+// #define TEENSY
+// Nano to Teensy mapping:
+//Arduino Teensy 3.5 Application
+//GND	GND	GND
+//D2	D0	D0
+//..	..	..
+//D12	D10	ENLCD1
+//D13	A1	ENLCD2
+//A0	A4	--- (KEYP)
+//A1	A5	--- 
+//A2	A6	LCD4
+//A3	A7	LCD5
+//A4	A8	LCD6
+//A5	A9	LCD7
+//A6	X (3.3 V)	---
+//A7	--- (AGND)	---
+//5V	Vin	5V
+
+#ifdef TEENSY
+#include <LiquidCrystalFast.h>
+#else
 #include <LiquidCrystal.h>
+#endif
 #include <EEPROM.h>
 #include <Wire.h>  
 
@@ -74,8 +99,13 @@
 LiquidCrystal lcd (6, 12, A4, A5, A2, A3);
 LiquidCrystal lcd2(6, 13, A4, A5, A2, A3); // hand wired board
 #else
+#ifdef TEENSY
+LiquidCrystal lcd (4, 10, A6, A7, A8, A9); // nova1200rev2 teensy
+LiquidCrystal lcd2(4, A1, A6, A7, A8, A9);
+#else
 LiquidCrystal lcd (6, 12, A2, A3, A4, A5); // nova1200rev2
 LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
+#endif
 #endif
 
 // very mini assembler for nova
@@ -410,6 +440,41 @@ void wait(void) {
   delayMicroseconds(2);
 }
 
+#ifdef TEENSY
+void WriteReg(int n, int value) {
+  if (n==10) {
+    value^=7;        // reverse polarity of enregsw
+    value&=7;        // force switches off (to allow switch emulation)
+  }
+  else
+    value=~value;      // negate value to make active high
+
+  digitalWrite(0, value&1);		// output 4bit data
+  digitalWrite(1, (value>>1)&1);
+  digitalWrite(2, (value>>2)&1);
+  digitalWrite(3, (value>>3)&1);
+  
+  digitalWrite(4, n&1);			// output 4bits address (3 bits used)
+  digitalWrite(5, (n>>1)&1);
+  digitalWrite(8, (n>>2)&1);
+  digitalWrite(9, 0); // A0'
+
+  if (n&8) {				// pulse enable on one of the boards
+    digitalWrite(7, 1);
+    delayMicroseconds(1);
+    digitalWrite(7, 0);
+    delayMicroseconds(1);
+    digitalWrite(7, 1);
+  }
+  else {
+    digitalWrite(6, 1);
+    delayMicroseconds(1);
+    digitalWrite(6, 0);
+    delayMicroseconds(1);
+    digitalWrite(6, 1);
+  }
+}
+#else
 void WriteReg(byte n, byte value) {
 #ifdef CONTROLSWITCHES
   value=~value;				// negate value to make active high
@@ -434,13 +499,21 @@ void WriteReg(byte n, byte value) {
     PORTB = s|3; 
   }
 }
+#endif
 
 void setup() {
+#ifdef TEENSY
+  for (byte i=0; i<=10; i++) 
+    pinMode(i, OUTPUT);
+  pinMode(A1, OUTPUT); 
+  digitalWrite(7, 1);     // disable both board enables
+  digitalWrite(6, 1);
+#else
   for (byte i=2; i<=11; i++) 
     pinMode(i, OUTPUT);
-
   digitalWrite(9, 1);     // disable both board enables
   digitalWrite(8, 1);
+#endif
 
 #ifdef CONTROLSWITCHES
   pinMode(A0, INPUT);     // control switches are connected via register network to 2 analog inputs 
@@ -449,6 +522,10 @@ void setup() {
 
   WriteReg(10, 8);      // disable all ctl signals, set switch mode (if switches wired)
   WriteReg(11, 0);
+
+#ifdef TEENSY
+  pinMode(A4, INPUT);     // control switches are connected via register network to 2 
+#endif
 
   lcd.begin(40, 2);   // welcome text on LCD
   lcd.print(F("Nova panel - Marcel van Herk " __DATE__));
@@ -490,6 +567,43 @@ void writeInst(int i)    // set instruction register (only 8 MSB bits used, reg 
   WriteReg(15, (i>>4));  // data H brd2
 }
 
+#ifdef TEENSY
+unsigned int readReg(int n) {
+  int res;
+  pinMode(0, INPUT);		// change bus to input
+  pinMode(1, INPUT);
+  pinMode(2, INPUT);
+  pinMode(3, INPUT);
+
+  digitalWrite(4, n&1);		// write 4 bit address
+  digitalWrite(5, (n>>1)&1);
+  digitalWrite(8, (n>>2)&1);
+  digitalWrite(9, (n>>4)&1); // A0'
+  digitalWrite(6, 1);
+  digitalWrite(7, 1);		// make sure all boards are disabled
+
+  if (n&8) {			// read from board 2
+    digitalWrite(7, 1);
+    digitalWrite(7, 0);
+    delayMicroseconds(1);
+    res = 15-(digitalRead(0)|(digitalRead(1)<<1)|(digitalRead(2)<<2)|(digitalRead(3)<<3));
+    digitalWrite(7, 1);
+  }
+  else {			// read from board 1
+    digitalWrite(6, 1);
+    digitalWrite(6, 0);
+    delayMicroseconds(1);
+    res = 15-(digitalRead(0)|(digitalRead(1)<<1)|(digitalRead(2)<<2)|(digitalRead(3)<<3));
+    digitalWrite(6, 1);
+  }
+
+  pinMode(0, OUTPUT);		// back to output
+  pinMode(1, OUTPUT);
+  pinMode(2, OUTPUT);
+  pinMode(3, OUTPUT);
+  return res;
+}
+#else
 unsigned int readReg(byte n) {
   int res;
 
@@ -513,6 +627,7 @@ unsigned int readReg(byte n) {
   
   return res;
 }
+#endif
 
 // read data lights
 unsigned int readData()
@@ -610,13 +725,16 @@ unsigned int stopNova(void)
 }
 
 // experimental - assumes wire connected to backplane B29
-unsigned int interruptNova(void)
-{ PORTD = (PORTD&0x3f)|(3<<6); // io channel 7
+void interruptNova(void)
+{ 
+#ifndef TEENSY
+  PORTD = (PORTD&0x3f)|(3<<6); // io channel 7
   byte s=(PORTB&0xF0)|(4);
   PORTB = s|3;
   PORTB = s|2;
   wait(); 
-  PORTB = s|3; 
+  PORTB = s|3;
+#endif 
 }
 
 // continue
@@ -729,8 +847,8 @@ String toOct(unsigned int v) {
 }
 
 // convert 4 digit hex string in buffer
-unsigned int makehex(byte *buf)
-{ unsigned int r;
+unsigned int makehex(char *buf)
+{ unsigned int r=0;
   for (int i=0; i<4; i++)
   { r = r<<4;
     if (buf[i]>'a') r = r+buf[i]-'a'+10;
@@ -788,41 +906,41 @@ void printHelp(String a)
 }
 
 /////////////////////// disassembler ////////////////////////
-// part of disassembler - return shift in operate instruction
+// part of disassembler - print shift in operate instruction
 String lcdPrintShift(unsigned int s) {
-  if (s==0) return("");
-  else if (s==1) return String("L");
+  if (s==1) return String("L");
   else if (s==2) return String("R");
   else if (s==3) return String("S"); // byte swap
+  else return("");
 }
 
-// part of disassembler - return carry op in operate instruction
+// part of disassembler - print carry op in operate instruction
 String lcdPrintCarry(unsigned int s) {
-  if (s==0) return String("");
-  else if (s==1) return String("Z");
+  if (s==1) return String("Z");
   else if (s==2) return String("O");
   else if (s==3) return String("C");
+  else return String("");
 }
 
-// part of disassembler - return noload in operate instruction
+// part of disassembler - print noload in operate instruction
 String lcdPrintNoload(unsigned int s) {
-  if (s==0)      return String("");
-  else if (s==1) return String("#");
+  if (s==1) return String("#");
+  else return String("");
 }
 
-// part of disassembler - return skip part of operate instruction
+// part of disassembler - print skip part of operate instruction
 String lcdPrintSkip(unsigned int s) {
-  if (s==0) return String("");
-  else if (s==1) return String("skp");
-  else if (s==2) return String("szc");
-  else if (s==3) return String("snc");
-  else if (s==4) return String("szr");
-  else if (s==5) return String("snr");
-  else if (s==6) return String("sez");
-  else if (s==7) return String("sbn");
+  if (s==1) return String("skp");
+  if (s==2) return String("szc");
+  if (s==3) return String("snc");
+  if (s==4) return String("szr");
+  if (s==5) return String("snr");
+  if (s==6) return String("sez");
+  if (s==7) return String("sbn");
+  return String("");
 }
 
-// part of disassembler - return target of memory access instruction
+// part of disassembler - print target of memory access instruction
 String lcdPrintTarget(unsigned int mode, unsigned int disp, int octalmode) {
   String s=" ";
   if (mode==0) { s += String(disp&255, octalmode); }
@@ -843,7 +961,7 @@ String lcdPrintTarget(unsigned int mode, unsigned int disp, int octalmode) {
   return s;
 }
 
-// part of disassembler - return transfer and control in IOT instruction
+// part of disassembler - print transfer and control in IOT instruction
 String lcdPrintIOT(unsigned int tr, unsigned int sk) {
   String s = "";
   if (tr==0) s += ("NIO");
@@ -945,7 +1063,7 @@ unsigned long unpackassemble(unsigned int v)
 { unsigned int mref = (v>>11)&0x1f;
   unsigned long opcode = (v>>8)&0x7;
   unsigned long insttype;
-  unsigned long op;
+  unsigned long op=0;
   unsigned long a=0;
   unsigned long b=0;
   unsigned long dest=0;
@@ -1055,7 +1173,7 @@ void lcdPrintDebug(void) {
   lcd.clear();
   unsigned int pc = readAddr()&0x7fff;
   unsigned int carry = readAddr()&0x8000;
-  unsigned int in = readData(), a0, a1, a2, a3;
+  unsigned int in = readData(), a0, a1, a2=0, a3=0;
   lcd.setCursor(0,0);		// print 4 accumulators
   lcd.print("ac0:");
   lcdPrintOctal(a0=examineAC(0));
@@ -1081,7 +1199,7 @@ void lcdPrintDebug(void) {
   int dest=in&0xff;
   bool target=false;
   int indirect=0;
-  unsigned int t;
+  unsigned int t=0;
     
   if      (mref<=1)        { target = true; } // jmp, jms
   else if (mref<=3)        { target = true; indirect=1; } // isz, dsz
@@ -1150,7 +1268,7 @@ void serialDebug(int mode) {
     int dest=in&0xff;
     bool target=false;
     int indirect=0;
-    unsigned int t;
+    unsigned int t=0;
   
     if      (mref<=1)        { target = true; } // jmp, jms
     else if (mref<=3)        { target = true; indirect=1; } // isz, dsz
@@ -1205,7 +1323,26 @@ void serialDebug(int mode) {
 ////////////////////////////////////////////////////
 // scan 4x3 keyboard array using 4 digital and one analog line
 int readKeyBoard(void)
-{ digitalWrite(A2, 1); 
+{ 
+#ifdef TEENSY
+  digitalWrite(A6, 1); 
+  delay(1);
+  int a = analogRead(A4);
+  digitalWrite(A6, 0);
+  digitalWrite(A7, 1);
+  delay(1);
+  int b = analogRead(A4);
+  digitalWrite(A7, 0);
+  digitalWrite(A8, 1);
+  delay(1);
+  int c = analogRead(A4);
+  digitalWrite(A8, 0);
+  digitalWrite(A9, 1);
+  delay(1);
+  int d = analogRead(A4);
+  digitalWrite(A9, 0);
+#else
+  digitalWrite(A2, 1); 
   delay(1);
   int a = analogRead(A6);
   digitalWrite(A2, 0);
@@ -1221,6 +1358,7 @@ int readKeyBoard(void)
   delay(1);
   int d = analogRead(A6);
   digitalWrite(A5, 0);
+#endif
 
   int row=0, col=0;
   if (a>100 or b>100 or c>100 or d>100)
@@ -1288,7 +1426,7 @@ void tests(int func)
       WriteReg(11, count/16);
 
       // test that read data gives back data (only if hand enabled)
-      digitalWrite(13, readData()!=(32768>>(count&15)));
+      digitalWrite(13, readData()!=((unsigned)32768>>(count&15)));
       delay(100);
       //debugPrint(a0, a1, 11, 11, readAddr(), readData()); 
     }
@@ -1492,7 +1630,6 @@ void processkey(short kbkey)
   else if (isoct && kbmode==2 && opmode==1)   //  numeric key in decimal mode
   { int kb=kbkey;
     if (kb==11) kb=0;
-    int pos=6-noctal;
     octalval = 10*octalval + kb;
     noctal++; 
     octalval = octalval & 0xffff;
@@ -1810,7 +1947,7 @@ void processkey(short kbkey)
     if (kb<=5)
     { unsigned int b=0;
       for (int i=0; i<kb; i++) b += core_lengths[i];
-      for (int i=0; i<core_lengths[kb]; i++) 
+      for (unsigned int i=0; i<core_lengths[kb]; i++) 
         writeBlocktoEEPROM(b+i, i*64);
     }
     lcd.clear();
@@ -1825,7 +1962,7 @@ void processkey(short kbkey)
     if (kb<=5)
     { unsigned int b=0;
       for (int i=0; i<kb; i++) b += core_lengths[i];
-      for (int i=0; i<core_lengths[kb]; i++) 
+      for (unsigned int i=0; i<core_lengths[kb]; i++) 
         readBlockfromEEPROM(b+i, i*64);
     }
     lcd.clear();
@@ -1875,7 +2012,7 @@ bool SerialIO=false;                // if set serial is sent/recieved to Nova
 
 void processSerial(int count)
 { byte b = Serial.read();
-  byte m[50];
+  char m[50];
   int a;
 
   if (SerialIO or opmode==5) 
@@ -1956,14 +2093,14 @@ void processSerial(int count)
               unsigned int n = makehex(m)>>8;
               unsigned int a=makehex(m+2);
               Serial.readBytes(m, n*4); 
-              for (int i=0; i<n; i++) deposit(a++, makehex(m+i*4));
+              for (unsigned int i=0; i<n; i++) deposit(a++, makehex(m+i*4));
               break;
               }
     case '?': { // read set of memory locations
               Serial.readBytes(m, 6);
               unsigned int n = makehex(m)>>8;
               unsigned int a=makehex(m+2);
-              for (int i=0; i<n; i++) 
+              for (unsigned int i=0; i<n; i++) 
                 if ((i&7)==7) Serial.println(toHex(examine(a++))); 
                 else Serial.print(toHex(examine(a++)));
               break;
@@ -1972,7 +2109,7 @@ void processSerial(int count)
               Serial.readBytes(m, 6);
               unsigned int n = makehex(m)>>8;
               unsigned int a = makehex(m+2);
-              for (int i=0; i<n; i++)
+              for (unsigned int i=0; i<n; i++)
               { Serial.print(toOct(a));
                 unsigned int v=examine(a++);
                 Serial.print(" ");
@@ -2023,7 +2160,7 @@ void processSerial(int count)
               m[32]=m[33]='0';
               for (int i=0; i<16; i++) m[i]=makehex(m+i*2)>>8;
               if (a<4) for (int j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
-              else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, m, 16);
+              else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
               break;
               }
     case '.': Serial.println("."); // acknowledge
@@ -2247,11 +2384,20 @@ void loop() {
         continue;
       }
       else if (haltInstruction==WRITELED)
-      { digitalWrite(6, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
+      { 
+#ifdef TEENSY
+        digitalWrite(4, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
+        digitalWrite(A6, 1);
+        digitalWrite(A7, 1);
+        digitalWrite(A8, 1);
+        digitalWrite(A9, 1);
+#else
+        digitalWrite(6, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
         digitalWrite(A2, 1);
         digitalWrite(A3, 1);
         digitalWrite(A4, 1);
         digitalWrite(A5, 1);
+#endif
         digitalWrite(13, (haltA0&1)!=0);
         delay(50); // must be shorter than 100 ms above!
         digitalWrite(13, 0);
@@ -2313,11 +2459,9 @@ void loop() {
     if (SerialIO==false && opmode!=5) break;
   }
   
-  int inst=0;		// instruction to Nova
-  int func=0;		// internal function number
   int count=0;
 
-  if (count=Serial.available())
+  if ((count=Serial.available()))
   { // Serial.write("S");
     processSerial(count);
     if (SerialIO) return;
@@ -2344,9 +2488,9 @@ void loop() {
       processkey(kbkey);
 
     /////////////////////////// read switch network /////////////////////////
+#ifdef CONTROLSWITCHES
     int a0=0, a1=0;
 
-#ifdef CONTROLSWITCHES
     // read toggle switches using resistor network, ignore LSB switches in serial mode
     a1 = (analogRead(A1)+analogRead(A1)+analogRead(A1)+analogRead(A1)+analogRead(A1)+analogRead(A1))/6;
     if (SerialIO or opmode==5)
