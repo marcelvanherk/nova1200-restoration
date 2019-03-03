@@ -6,13 +6,13 @@ $Descr A3 16535 11693
 encoding utf-8
 Sheet 1 1
 Title "Computer controlled front panel for Nova 1200 computer"
-Date "2019-01-01"
+Date "2019-03-02"
 Rev "2"
 Comp "Marcel van Herk"
 Comment1 "Add pinheader for data switches"
 Comment2 "Add pinheader for control switches"
 Comment3 "Idea: add extra register on SEL7"
-Comment4 "Swapped EXEC and DEFER"
+Comment4 "Swapped EXEC and DEFER; added Teensy jumper"
 $EndDescr
 $Comp
 L 74xx:74LS257 U1
@@ -3355,7 +3355,7 @@ Wire Wire Line
 	14600 8600 14600 8750
 Connection ~ 14800 8550
 Wire Wire Line
-	14400 8500 14600 8500
+	14400 8500 14450 8500
 Connection ~ 14600 8500
 Wire Wire Line
 	14600 8500 14600 8550
@@ -3826,4 +3826,69 @@ GND
 Text Label 11800 9600 0    50   ~ 0
 GND
 NoConn ~ 7650 7250
+Text Notes 12300 7100 0    50   ~ 0
+SPI
+Text Notes 12300 7200 0    50   ~ 0
+SPI
+Text Notes 12300 7300 0    50   ~ 0
+SPI
+Text Notes 12500 7000 0    50   ~ 0
+A0
+Text Notes 12500 7100 0    50   ~ 0
+A1
+Text Notes 12500 7200 0    50   ~ 0
+A2
+Text Notes 12500 7300 0    50   ~ 0
+A0'
+Text Notes 12450 6600 0    50   ~ 0
+ENLCD1
+Text Notes 12450 6700 0    50   ~ 0
+ENLCD2
+Text Notes 11800 6450 0    50   ~ 0
+Proposed to allow SPI
+Text Notes 14200 6700 0    50   ~ 0
+LCD4
+Text Notes 14200 6800 0    50   ~ 0
+LCD5
+Text Notes 14200 6900 0    50   ~ 0
+LCD6
+Text Notes 14200 7000 0    50   ~ 0
+I2C. LCD7
+Text Notes 14200 7100 0    50   ~ 0
+I2C
+Text Notes 14050 6450 0    50   ~ 0
+Proposed to isolate I2C \nfrom LCD
+Text Notes 14200 6600 0    50   ~ 0
+FREE
+Text Notes 14200 7300 0    50   ~ 0
+FREE
+Text Notes 14100 10250 0    50   ~ 0
+ERRORS: PINHEADERS WRONG FOOTPRINT\nAREF NOT CONNECTED TO KEYCHAIN; \nHole size Nova conn
+$Comp
+L Device:R_Small R69
+U 1 1 5C7B8356
+P 13350 9550
+F 0 "R69" V 13154 9550 50  0000 C CNN
+F 1 "Jumper" V 13245 9550 50  0000 C CNN
+F 2 "Resistor_THT:R_Axial_DIN0204_L3.6mm_D1.6mm_P5.08mm_Horizontal" H 13350 9550 50  0001 C CNN
+F 3 "~" H 13350 9550 50  0001 C CNN
+	1    13350 9550
+	0    1    1    0   
+$EndComp
+Wire Wire Line
+	14450 8500 14450 9550
+Wire Wire Line
+	14450 9550 13450 9550
+Connection ~ 14450 8500
+Wire Wire Line
+	14450 8500 14600 8500
+Wire Wire Line
+	13250 9550 12600 9550
+Text Notes 12650 9700 0    50   ~ 0
+Place when using Teensy 3.5 processor
+Wire Wire Line
+	12600 9550 12600 8350
+Wire Wire Line
+	12600 8350 11800 8350
+Connection ~ 11800 8350
 $EndSCHEMATC
