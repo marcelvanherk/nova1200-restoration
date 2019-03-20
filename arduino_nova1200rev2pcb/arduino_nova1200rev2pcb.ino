@@ -68,6 +68,7 @@
 // mvh 20190302 Added #TEENSY define for TEENSY3.5, connected to rightsided 24 pins
 //		with USB connector pointing to inside of board, 24 other teensy pins NC 
 // mvh 20190302 Fixed type errors and warnings in Teensy compile
+// mvh 20190302 Added IO instructions to mini assembler
 
 // #define TEENSY
 // Nano to Teensy mapping:
@@ -128,6 +129,24 @@ LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
 #define INTDS      060277
 #define READS(d)  (060477+(d<<11))
 #define SKIP      (MOV(0,0)+NOLOAD+SKP) 
+
+// IO instructions
+#define NIO(d)    (060000+d)
+#define DIA(a, d) (060400+(a<<13)+d)
+#define DOA(a, d) (061000+(a<<13)+d)
+#define DIB(a, d) (061400+(a<<13)+d)
+#define DOB(a, d) (062000+(a<<13)+d)
+#define DIC(a, d) (062400+(a<<13)+d)
+#define DOC(a, d) (063000+(a<<13)+d)
+#define SKPBN(d)  (063400+d)
+#define SKPBZ(d)  (063500+d)
+#define SKPDN(d)  (063600+d)
+#define SKPDZ(d)  (063700+d)
+
+// function code to add to IO instructions
+#define IOS 0100
+#define IOC 0200
+#define IOP 0300
 
 // relative addressing for a, e.g. STA(0, 10)+AC2 or STA(0, 10)+IND or JMP(0)+AC3
 #define PC  00400
@@ -1503,8 +1522,8 @@ void tests(int func)
   { stopNova();
     assemble(0, prog1);
     assemble(050, prog2);
-    assemble(100, prog3);
-    assemble(140, prog4);
+    assemble(0100, prog3);
+    assemble(0140, prog4);
     // assemble(0400, prog4); // force PC relative addressing
     lcd.setCursor(0,1);
     lcd.print("loaded prog1..4");
