@@ -69,8 +69,9 @@
 //		with USB connector pointing to inside of board, 24 other teensy pins NC 
 // mvh 20190302 Fixed type errors and warnings in Teensy compile
 // mvh 20190302 Added IO instructions to mini assembler
+// mvh 20190407 Teensy 3.5 functioning including SoftWire I2C
 
-// #define TEENSY
+#define TEENSY
 // Nano to Teensy mapping:
 //Arduino Teensy 3.5 Application
 //GND	GND	GND
@@ -88,25 +89,48 @@
 //A7	--- (AGND)	---
 //5V	Vin	5V
 
+#include <EEPROM.h>
+
 #ifdef TEENSY
 #include <LiquidCrystalFast.h>
 #else
 #include <LiquidCrystal.h>
 #endif
-#include <EEPROM.h>
-#include <Wire.h>  
+
+#ifdef TEENSY
+  #include <AsyncDelay.h>
+  #include <SoftWire.h>
+  SoftWire softwarei2c(A8, A9);
+  #define Wire softwarei2c
+  void WireEnd() {
+    Wire.end();
+    pinMode(A8, OUTPUT);
+    pinMode(A9, OUTPUT);
+  }
+  byte buffer[64];
+  void Wirebegin() {
+    Wire.setDelay_us(1);
+    Wire.setRxBuffer(buffer, 64);
+    Wire.setTxBuffer(buffer, 64);
+    Wire.begin();
+  }
+#else
+  #include <Wire.h>
+  #define WireEnd Wire.end
+  #define Wirebegin Wire.begin
+#endif
 
 #ifdef CONTROLSWITCHES
-LiquidCrystal lcd (6, 12, A4, A5, A2, A3);
-LiquidCrystal lcd2(6, 13, A4, A5, A2, A3); // hand wired board
+  LiquidCrystal lcd (6, 12, A4, A5, A2, A3);
+  LiquidCrystal lcd2(6, 13, A4, A5, A2, A3); // hand wired board
 #else
-#ifdef TEENSY
-LiquidCrystal lcd (4, 10, A6, A7, A8, A9); // nova1200rev2 teensy
-LiquidCrystal lcd2(4, A1, A6, A7, A8, A9);
-#else
-LiquidCrystal lcd (6, 12, A2, A3, A4, A5); // nova1200rev2
-LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
-#endif
+  #ifdef TEENSY
+    LiquidCrystalFast lcd (4, 10, A6, A7, A8, A9); // nova1200rev2 teensy
+    LiquidCrystalFast lcd2(4, A1, A6, A7, A8, A9);
+  #else
+    LiquidCrystal lcd (6, 12, A2, A3, A4, A5); // nova1200rev2
+    LiquidCrystal lcd2(6, 13, A2, A3, A4, A5);
+  #endif
 #endif
 
 // very mini assembler for nova
@@ -521,6 +545,7 @@ void WriteReg(byte n, byte value) {
 #endif
 
 void setup() {
+
 #ifdef TEENSY
   for (byte i=0; i<=10; i++) 
     pinMode(i, OUTPUT);
@@ -549,7 +574,7 @@ void setup() {
   lcd.begin(40, 2);   // welcome text on LCD
   lcd.print(F("Nova panel - Marcel van Herk " __DATE__));
 
-  unsigned short memsize;
+  unsigned short memsize=0;
   for (byte i=0; i<8; i++)
   { unsigned int a=i*4096-1;
     if (examine(a)==0)
@@ -571,7 +596,6 @@ void setup() {
   printHelp(F("This computer was manufactured in 1971"));
 
   Serial.begin(115200);     // usb serial for debug output
-  //Serial.setTimeout(4000);  // give me some time to type
 }
 
 void writeData(int d)    // set data register
@@ -1529,6 +1553,13 @@ void tests(int func)
     lcd.print("loaded prog1..4");
     delay(200);
   }
+  else if (func==8) // test gpio
+  { int i=0;
+    while(1) {
+      i++;
+      gpio(i&255);
+    }
+  }
 }
 
 // -------------------- keyboard interface description ---------------------
@@ -2194,7 +2225,7 @@ void processSerial(int count)
 // WARNING: address is a page address, 6-bit end will wrap around
 // also, data can be maximum of about 30 bytes, because the Wire library has a buffer of 32 bytes
 void i2c_eeprom_write_page(int deviceaddress, unsigned int eeaddresspage, byte* data, byte length ) 
-{ Wire.begin();
+{ Wirebegin();
   Wire.beginTransmission(deviceaddress);
   Wire.write((int)(eeaddresspage >> 8)); // MSB
   Wire.write((int)(eeaddresspage & 0xFF)); // LSB
@@ -2202,12 +2233,12 @@ void i2c_eeprom_write_page(int deviceaddress, unsigned int eeaddresspage, byte* 
     Wire.write(data[c]);
   Wire.endTransmission();
   delay(5);
-  Wire.end();
+  WireEnd();
 }
 
 // maybe let's not read more than 30 or 32 bytes at a time!
 void i2c_eeprom_read_buffer(int deviceaddress, unsigned int eeaddress, byte *buffer, int length ) 
-{ Wire.begin();
+{ Wirebegin();
   Wire.beginTransmission(deviceaddress);
   Wire.write((int)(eeaddress >> 8)); // MSB
   Wire.write((int)(eeaddress & 0xFF)); // LSB
@@ -2215,19 +2246,19 @@ void i2c_eeprom_read_buffer(int deviceaddress, unsigned int eeaddress, byte *buf
   Wire.requestFrom(deviceaddress,length);
   for (int c = 0; c < length; c++ )
     if (Wire.available()) buffer[c] = Wire.read();
-  Wire.end();
+  WireEnd();
 }
 
 byte i2c_eeprom_read_byte( int deviceaddress, unsigned int eeaddress ) 
 { byte rdata = 0xFF;
-  Wire.begin();
+  Wirebegin();
   Wire.beginTransmission(deviceaddress);
   Wire.write((int)(eeaddress >> 8)); // MSB
   Wire.write((int)(eeaddress & 0xFF)); // LSB
   Wire.endTransmission();
   Wire.requestFrom(deviceaddress,1);
   if (Wire.available()) rdata = Wire.read();
-  Wire.end();
+  WireEnd();
   return rdata;
 }
 
@@ -2332,7 +2363,8 @@ void writeBlocktoEEPROM(int block, unsigned int A)
 
 void gpio(unsigned int A)
 { byte d=A>>8;
-  Wire.begin();
+  Wirebegin();
+  delay(1);
   Wire.beginTransmission(0x20);
   Wire.write(0x00);
   Wire.write(d);        // direction bits
@@ -2352,7 +2384,7 @@ void gpio(unsigned int A)
     Wire.requestFrom(0x20, 1);
     depositAC(0, Wire.read());
   }
-  Wire.end();
+  WireEnd();
 }
 
 ///////////////////////////////////////// loop ////////////////////////////////////
