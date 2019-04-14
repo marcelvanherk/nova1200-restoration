@@ -70,6 +70,8 @@
 // mvh 20190302 Fixed type errors and warnings in Teensy compile
 // mvh 20190302 Added IO instructions to mini assembler
 // mvh 20190407 Teensy 3.5 functioning including SoftWire I2C
+// mvh 20190414 Enable LED output; make memory tests run longer; add tests(8)
+//              Push 9 long will force stop Nova
 
 #define TEENSY
 // Nano to Teensy mapping:
@@ -552,6 +554,7 @@ void setup() {
   pinMode(A1, OUTPUT); 
   digitalWrite(7, 1);     // disable both board enables
   digitalWrite(6, 1);
+  pinMode(13, OUTPUT);
 #else
   for (byte i=2; i<=11; i++) 
     pinMode(i, OUTPUT);
@@ -1497,11 +1500,12 @@ void tests(int func)
   { stopNova();
     lcd.setCursor(0,1);
     lcd.print("     mt0 active");
-    for(unsigned int a=0; a<65535; a++)
-    { unsigned int b = a&1?0x5555:0xaaaa;
-      deposit(0, b);
-      unsigned int c = examine(0);
-      digitalWrite(13, b!=c);
+    for(unsigned int a=0; a<65535*32; a++)
+    { unsigned int v = random(65535); // a&1?0x5555:0xaaaa;
+      unsigned int ad = 0; // a&16383;
+      deposit(ad, v);
+      unsigned int c = examine(ad);
+      digitalWrite(13, v!=c);
     }
     lcd.setCursor(0,1);
     lcd.print("mt0 ready      ");
@@ -1512,7 +1516,7 @@ void tests(int func)
   { stopNova();
     lcd.setCursor(0,1);
     lcd.print("     mt1 active");
-    for(unsigned int a=0; a<65535; a++)
+    for(unsigned int a=0; a<65535*32; a++)
     { deposit(0, 0); // drive inhibit
     }
     lcd.setCursor(0,1);
@@ -1524,7 +1528,7 @@ void tests(int func)
   { stopNova();
     lcd.setCursor(0,1);
     lcd.print("     mt2 active");
-    for(unsigned int a=0; a<65535; a++)
+    for(unsigned int a=0; a<65535*32; a++)
     { deposit(0, 0xffff); // no inhibits driven
     }
     lcd.setCursor(0,1);
@@ -1553,11 +1557,16 @@ void tests(int func)
     lcd.print("loaded prog1..4");
     delay(200);
   }
-  else if (func==8) // test gpio
+  else if (func==8) // test write/read all memory
   { int i=0;
+    deposit(01000, i);
     while(1) {
       i++;
-      gpio(i&255);
+      deposit(i, i);
+      int v = examine(i);
+      Serial.println(toHex(v));
+      if (Serial.available()) break;
+      delay(2);
     }
   }
 }
@@ -2399,6 +2408,8 @@ void loop() {
       haltInstruction = examine(haltAddress-1);
       haltA0          = examineAC(0);
       novaRunning     = false;
+
+      if (kbmode==3) haltInstruction=0; // allow key 9 to stop running
 
       if (haltInstruction==INFO)
       { lcdPrintDebug();
