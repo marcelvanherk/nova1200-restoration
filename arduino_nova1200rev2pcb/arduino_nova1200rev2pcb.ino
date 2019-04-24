@@ -72,10 +72,14 @@
 // mvh 20190407 Teensy 3.5 functioning including SoftWire I2C
 // mvh 20190414 Enable LED output; make memory tests run longer; add tests(8)
 //              Push 9 long will force stop Nova
+// mvh 20190422 Added interactive mode, octal with readable commands
+//              Added led command, command line history, backspace
+// mvh 20190423 Added auto propose next cmd, history, help and some cleanup
+// mvh 20190424 Added test N, start on 'file system' in eeprom
+// mvh 20190424 Examine 0 after memory sizing; remove hw interrupt
 
 #define TEENSY
-// Nano to Teensy mapping:
-//Arduino Teensy 3.5 Application
+//Nano to Teensy (3.5 or 3.2) mapping:
 //GND	GND	GND
 //D2	D0	D0
 //..	..	..
@@ -109,11 +113,12 @@
     pinMode(A8, OUTPUT);
     pinMode(A9, OUTPUT);
   }
-  byte buffer[64];
+  byte rxbuffer[64];
+  byte txbuffer[64];
   void Wirebegin() {
     Wire.setDelay_us(1);
-    Wire.setRxBuffer(buffer, 64);
-    Wire.setTxBuffer(buffer, 64);
+    Wire.setRxBuffer(rxbuffer, 64);
+    Wire.setTxBuffer(txbuffer, 64);
     Wire.begin();
   }
 #else
@@ -546,6 +551,8 @@ void WriteReg(byte n, byte value) {
 }
 #endif
 
+unsigned short memsize=0;
+
 void setup() {
 
 #ifdef TEENSY
@@ -575,11 +582,11 @@ void setup() {
 #endif
 
   lcd.begin(40, 2);   // welcome text on LCD
+  lcd.setCursor(0, 0);
   lcd.print(F("Nova panel - Marcel van Herk " __DATE__));
 
-  unsigned short memsize=0;
-  for (byte i=0; i<8; i++)
-  { unsigned int a=i*4096-1;
+  for (byte i=0; i<16; i++)
+  { unsigned int a=i*2048-1;
     if (examine(a)==0)
     { deposit(a, 1);
       if (examine(a)==1) memsize=a+1;
@@ -592,6 +599,7 @@ void setup() {
   lcd.print(F("Nova memory: "));
   lcd.print(memsize);
   lcd.print(F(" 16-bit words"));
+  examine(0);
   
   lcd2.begin(40, 2);    // welcome text on LCD
   lcd2.setCursor(0, 1);
@@ -599,6 +607,7 @@ void setup() {
   printHelp(F("This computer was manufactured in 1971"));
 
   Serial.begin(115200);     // usb serial for debug output
+  Serial.setTimeout(5000);
 }
 
 void writeData(int d)    // set data register
@@ -770,19 +779,6 @@ unsigned int stopNova(void)
   return readAddr();
 }
 
-// experimental - assumes wire connected to backplane B29
-void interruptNova(void)
-{ 
-#ifndef TEENSY
-  PORTD = (PORTD&0x3f)|(3<<6); // io channel 7
-  byte s=(PORTB&0xF0)|(4);
-  PORTB = s|3;
-  PORTB = s|2;
-  wait(); 
-  PORTB = s|3;
-#endif 
-}
-
 // continue
 // note: examine and deposit affect continue address
 void continueNova(void)
@@ -900,6 +896,16 @@ unsigned int makehex(char *buf)
     if (buf[i]>'a') r = r+buf[i]-'a'+10;
     else if (buf[i]>'A') r = r+buf[i]-'A'+10;
     else r = r+buf[i]-'0';
+  }
+  return r;
+}
+
+unsigned int makeoct(String s, int pos)
+{ unsigned int r=0;
+  for (unsigned int i=pos; i<s.length(); i++)
+  { if (s[i]<'0' || s[i]>'7') break;
+    r = r<<3;
+    r = r+s[i]-'0';
   }
   return r;
 }
@@ -1349,24 +1355,6 @@ void serialDebug(int mode) {
 }
 
 ////////////////////////////////////////////////////
-// output debug info for arduino interface to serial port
-/*void debugPrint(int a0, int a1, int inst, int func, unsigned int addr, unsigned int data) {
-  Serial.print("a0: ");
-  Serial.print(a0);
-  Serial.print(" a1: ");
-  Serial.print(a1);
-  Serial.print(" inst: ");
-  Serial.print(inst, HEX);
-  Serial.print(" func: ");
-  Serial.print(func);
-  Serial.print(" Addr=");
-  Serial.print(addr, HEX);
-  Serial.print(" Data=");
-  Serial.println(data, HEX);
-}
-*/
-
-////////////////////////////////////////////////////
 // scan 4x3 keyboard array using 4 digital and one analog line
 int readKeyBoard(void)
 { 
@@ -1484,7 +1472,7 @@ void tests(int func)
     lcd.setCursor(0,1);
     lcd.print("     dump active");
     lcd.setCursor(0,1);
-    for(int a=0; a<8192; a++)
+    for(int a=0; a<memsize; a++)
     { if ((a&511)==511) lcd.print("#");
       int v = examine(a);
       Serial.print(toHex(a));
@@ -1534,11 +1522,18 @@ void tests(int func)
     lcd.setCursor(0,1);
     lcd.print("mt2 ready      ");
   }
-  else if (func==5) // Cause interrupt
-  { interruptNova();
-    lcd.setCursor(0,1);
-    lcd.print("sent interrupt pulse");
-    delay(200);
+  else if (func==5) // test write/read all memory
+  { while(1) {
+      int i=0; String s="";
+      for (i=8192; i<memsize; i+=64) {
+        deposit(i, i);
+      }
+      for (i=8192; i<memsize; i+=64) {
+        int v = examine(i);
+        if (v==i) s+='.'; else s+='X';
+      }  
+      Serial.println(s);
+    }
   }
   else if (func==6) // Continue passing virtual switches
   { continueNovaSw(0x6666);
@@ -1557,17 +1552,22 @@ void tests(int func)
     lcd.print("loaded prog1..4");
     delay(200);
   }
-  else if (func==8) // test write/read all memory
-  { int i=0;
-    deposit(01000, i);
-    while(1) {
-      i++;
-      deposit(i, i);
-      int v = examine(i);
-      Serial.println(toHex(v));
-      if (Serial.available()) break;
-      delay(2);
+  else if (func==8)
+  { stopNova();
+    lcd.setCursor(0,1);
+    lcd.print("     mtfull active");
+    for(unsigned int a=0; a<65535*32; a++)
+    { unsigned int ad = a; // a&16383;
+      while(ad>=memsize) ad-=memsize;
+      unsigned int org = examine(ad);
+      unsigned int v = random(65535); // a&1?0x5555:0xaaaa;
+      deposit(ad, v);
+      unsigned int c = examine(ad);
+      digitalWrite(13, v!=c);
+      deposit(ad, org);
     }
+    lcd.setCursor(0,1);
+    lcd.print("mtfull ready      ");
   }
 }
 
@@ -1613,12 +1613,12 @@ void tests(int func)
 // 0..7 selects tests (7=copy test program to nova)
 
 int kbmode=0, noctal;               // mode for keypad 1=address, 2=data
-unsigned long octalval;             // currently entered octal data
-unsigned int octaladdress;          // last used octal address from keypad/front panel
+unsigned int octalval;             // currently entered octal data
+unsigned short octaladdress;          // last used octal address from keypad/front panel
 unsigned int opmode=0;              // opmode, set with key 9
 int debugging=0;                    // set after single instruction step
 unsigned short haltInstruction, haltA0, haltAddress;
-unsigned int core_lengths[] = {4, 128, 128, 128, 128, 512};
+unsigned int core_lengths[] = {4, 128, 128, 128, 128, 512}; // in blocks of 64 words
 
 void processkey(short kbkey)
 { /////////////////////////// keypad pressed /////////////////////////
@@ -1976,7 +1976,7 @@ void processkey(short kbkey)
     if (opmode==3) printHelp(F("debug #=step 8=step back 9=setup"));
     if (opmode==4) printHelp(F("setup unused"));
     if (opmode==5) { printHelp(F("I/O mode 9(long)=exit")); lcd.clear(); }
-    if (opmode==6) { printHelp(F("0=regtest 1=dmp 2-4=mtst 7=pld")); lcd.clear(); }
+    if (opmode==6) { printHelp(F("0=regtest 1=dmp 2-5=mtst 7=pld 8=fullmtst")); lcd.clear(); }
     if (opmode==7) { printHelp(F("Save core to eeprom bank N")); lcd.clear(); }
     if (opmode==8) { printHelp(F("Load core from eeprom bank N")); lcd.clear(); }
     lcd.noCursor();
@@ -2039,15 +2039,61 @@ void processkey(short kbkey)
 }
 
 // ------------------------------------------------------------
-// Serial interface description
+// Serial interface description, interactive mode all numbers in octal
+
+String helpstring=
+String("Interactive debugger/supervisor for Nova1200:\r\n")+
+String("acN [ val]            read/write register\r\n")+
+String("pc [ val]             read/write program counter\r\n")+
+String("reg                   show all registers, pc and carry\r\n")+
+String("mem addr [ val]       read/write memory location\r\n")+
+String("dump address[ length] dump memory\r\n")+
+String("list address[ length] list assembly (numbers are octal)\r\n")+
+String("asm addr INST         assemble to memory (slow, INST exactly as disassembled)\r\n")+
+String("go addr               run at memory location\r\n")+
+String("run addr              run at memory location, serial input passed to program\r\n")+
+String("step [ count]         debug step count instructions\r\n")+
+String("reset                 reset nova\r\n")+
+String("stop                  stop nova\r\n")+
+String("continue              continue nova\r\n")+
+String("clear addr cnt [ val] clear block of memory with value\r\n")+
+String("load addr block cnt   load RAM from eeprom blocks\r\n")+
+String("save addr block cnt   save RAM to eeprom blocks\r\n")+
+String("test n                run test function\r\n")+
+String("version               print version\r\n")+
+String("lcd line text         display line 0..3 on LCD\r\n")+
+String("led N                 progrem GPIO and Arduino LED (400)\r\n")+
+String("eeprom block          dump eeprom block to output\r\n")+
+String("init                  init Arduino supervisor\r\n")+
+String(":nnaaaa[hhhh]         Deposit nn memory locations (a and h hex)\r\n")+
+String(";naaaa[hh*16]         Write line n in eeprom block (a and h hex)\r\n")+
+String("~                     Switch to non-interactive mode\r\n")+
+String("help                  Show this text\r\n")+
+String("(enter)               automatically propose next command");
+
+// suggested named programs, search from start block (e.g. 4):
+// @@ name loadaddress length startaddress
+// CODE 
+// block 4 + length/4 + 2:
+// @@ name loadaddress length startaddress
+// CODE
+// other values (stops search)
 //
+// required support commands:
+// save name addr length [start]
+// save name (re-save same block)
+// load name (suggests run start address as next command)
+// run name
+// go name
+
+// old non-interactive mode (all numbers in hex):
+
 // S              Stop
 // O              Continue
 // ossss          Continue passing s as switches value (experimental)
 // I              Instruction step
 // Y              Memory step
 // T              Reset
-// N              Interrupt (experimental)
 // Ghhhh          Start at address hhhh
 // Mhhhh          Read memory at address hhhh
 // Dhhhhhdddd     Deposit dddd at address hhhh
@@ -2066,13 +2112,27 @@ void processkey(short kbkey)
 // r              Show registers
 // i              Show disassembly then instruction step
 // s              Show disassembly then instruction step then registers
+// !              Initialize arduino
+// ~              Toggle interactive mode (commands below, all number below in octal)
 
-bool SerialIO=false;                // if set serial is sent/recieved to Nova
+bool SerialIO=false;               // if set serial is sent/recieved to Nova
+
+#ifdef TEENSY
+bool InteractiveDebugger=true;     // if set serial debugger is more interactive
+String line;
+String nextcmd;
+#define NHISTORY 40
+String history[NHISTORY];
+int nhist=0;
+#else
+bool InteractiveDebugger=false;     // if set serial debugger is more interactive
+#endif
 
 void processSerial(int count)
 { byte b = Serial.read();
   char m[50];
   int a;
+  int pc;
 
   if (SerialIO or opmode==5) 
   { if (b=='@') 
@@ -2099,133 +2159,552 @@ void processSerial(int count)
       }
     }
   }
-  else
-    switch(b)
-  { case 'T': resetNova(); // fall through to stop io mode
-    case 'S': stopNova(); 
-              if(SerialIO or opmode==5) 
-              { Serial.println("interactive mode");
-                SerialIO=false; opmode=0; 
-              }  
-              break;
-    case 'I': stepNova(); break;
-    case 'Y': memstepNova(); break;
-    case 'O': continueNova(); break;
-    case 'o': Serial.readBytes(m, 4); // continue put data on switches
-              continueNovaSw(makehex(m)); 
-              break;
-    case 'N': interruptNova(); break;
-    case 'G': Serial.readBytes(m, 4);
-              startNova(makehex(m));
-              break;
-    case 'M': Serial.readBytes(m, 4); // read one Memory location 
-              Serial.println(toHex(examine(makehex(m)))); 
-              break;
-    case 'D': Serial.readBytes(m, 8); // Deposit one memory location
-              deposit(makehex(m), makehex(m+4)); break;
-    case 'E': Serial.readBytes(m, 1); // Examine AC
-              Serial.println(toHex(examineAC(m[0]-'0'))); break;
-    case 'F': Serial.readBytes(m, 5); // Fill AC
-              depositAC(m[0]-'0', makehex(m+1)); break;
-    case 'X': Serial.readBytes(m, 1); // Read frontpanel LEDs
-              if (m[0]=='0') Serial.println(toHex(readData())); 
-              if (m[0]=='1') Serial.println(toHex(readAddr())); 
-              if (m[0]=='2') Serial.println(toHex(readLights())); 
-              break;
-    case 'L': {int l=Serial.readBytesUntil(0x0d, m, 42); // write LCD text
-              if (m[0]=='0') 
-              { lcd.setCursor(0, m[1]-'0');
+
+  // ctrl-C
+  if (b==3)
+  { SerialIO=false;
+    opmode=0;
+    stopNova();
+    Serial.println("ctrl-C");
+    Serial.print(">");
+    return;
+  }
+
+  // old non-interactive mode
+  else if (!InteractiveDebugger)
+  { switch(b)
+    { case 'T': resetNova(); // fall through to stop io mode
+      case 'S': stopNova(); 
+                if(SerialIO or opmode==5) 
+                { Serial.println("interactive mode");
+                  SerialIO=false; opmode=0; 
+                }  
+                break;
+      case 'I': stepNova(); break;
+      case 'Y': memstepNova(); break;
+      case 'O': continueNova(); break;
+      case 'o': Serial.readBytes(m, 4); // continue put data on switches
+                continueNovaSw(makehex(m)); 
+                break;
+      case 'G': Serial.readBytes(m, 4);
+                startNova(makehex(m));
+                break;
+      case 'M': Serial.readBytes(m, 4); // read one Memory location 
+                Serial.println(toHex(examine(makehex(m)))); 
+                break;
+      case 'D': Serial.readBytes(m, 8); // Deposit one memory location
+                deposit(makehex(m), makehex(m+4)); break;
+      case 'E': Serial.readBytes(m, 1); // Examine AC
+                Serial.println(toHex(examineAC(m[0]-'0'))); break;
+      case 'F': Serial.readBytes(m, 5); // Fill AC
+                depositAC(m[0]-'0', makehex(m+1)); break;
+      case 'X': Serial.readBytes(m, 1); // Read frontpanel LEDs
+                if (m[0]=='0') Serial.println(toHex(readData())); 
+                if (m[0]=='1') Serial.println(toHex(readAddr())); 
+                if (m[0]=='2') Serial.println(toHex(readLights())); 
+                break;
+      case 'L': {int l=Serial.readBytesUntil(0x0d, m, 42); // write LCD text
+                if (m[0]=='0') 
+                { lcd.setCursor(0, m[1]-'0');
+                  lcd.print(makespc(40));
+                  lcd.setCursor(0, m[1]-'0');
+                  for (int i=2; i<l; i++) lcd.write(char(m[i]));
+                }
+                if (m[0]=='1') 
+                { lcd2.setCursor(0, m[1]-'0');
+                  lcd2.print(makespc(40));
+                  lcd2.setCursor(0, m[1]-'0');
+                  for (int i=2; i<l; i++) lcd2.write(char(m[i]));
+                }
+                break;
+                }
+      case ':': { // write set of memory locations
+                Serial.readBytes(m, 6);
+                unsigned short n = makehex(m)>>8;
+                unsigned short a=makehex(m+2);
+                Serial.readBytes(m, n*4); 
+                for (unsigned short i=0; i<n; i++) deposit(a++, makehex(m+i*4));
+                break;
+                }
+      case '?': { // read set of memory locations
+                Serial.readBytes(m, 6);
+                unsigned short n = makehex(m)>>8;
+                unsigned short a=makehex(m+2);
+                for (unsigned short i=0; i<n; i++) 
+                  if ((i&7)==7) Serial.println(toHex(examine(a++))); 
+                  else Serial.print(toHex(examine(a++)));
+                break;
+                }
+      case 'l': { // disassemble memory locations
+                Serial.readBytes(m, 6);
+                unsigned short n = makehex(m)>>8;
+                unsigned short a = makehex(m+2);
+                for (unsigned short i=0; i<n; i++)
+                { Serial.print(toOct(a));
+                  unsigned short v=examine(a++);
+                  Serial.print(" ");
+                  Serial.print(toOct(v));
+                  Serial.println(lcdPrintDisas(v, OCT));
+                }
+                break;
+                }
+      case 'r': serialDebug(1); // show registers
+                break;
+      case 'i': serialDebug(2); // instruction step
+                Serial.println();
+                stepNova();
+                break; 
+      case 's': serialDebug(1); // debug step; show registers, then execute instruction
+                serialDebug(2); 
+                Serial.println();
+                stepNova();
+                break;
+      case '/': SerialIO=true; // enter IO mode
+                Serial.println("IO mode; @=exit");
+                lcd.setCursor(0, 0);
                 lcd.print(makespc(40));
-                lcd.setCursor(0, m[1]-'0');
-                for (int i=2; i<l; i++) lcd.write(char(m[i]));
-              }
-              if (m[0]=='1') 
-              { lcd2.setCursor(0, m[1]-'0');
-                lcd2.print(makespc(40));
-                lcd2.setCursor(0, m[1]-'0');
-                for (int i=2; i<l; i++) lcd2.write(char(m[i]));
-              }
-              break;
-              }
-    case ':': { // write set of memory locations
-              Serial.readBytes(m, 6);
-              unsigned int n = makehex(m)>>8;
-              unsigned int a=makehex(m+2);
-              Serial.readBytes(m, n*4); 
-              for (unsigned int i=0; i<n; i++) deposit(a++, makehex(m+i*4));
-              break;
-              }
-    case '?': { // read set of memory locations
-              Serial.readBytes(m, 6);
-              unsigned int n = makehex(m)>>8;
-              unsigned int a=makehex(m+2);
-              for (unsigned int i=0; i<n; i++) 
-                if ((i&7)==7) Serial.println(toHex(examine(a++))); 
-                else Serial.print(toHex(examine(a++)));
-              break;
-              }
-    case 'l': { // disassemble memory locations
-              Serial.readBytes(m, 6);
-              unsigned int n = makehex(m)>>8;
-              unsigned int a = makehex(m+2);
-              for (unsigned int i=0; i<n; i++)
-              { Serial.print(toOct(a));
-                unsigned int v=examine(a++);
-                Serial.print(" ");
-                Serial.print(toOct(v));
-                Serial.println(lcdPrintDisas(v, OCT));
-              }
-              break;
-              }
-    case 'r': serialDebug(1); // show registers
-              break;
-    case 'i': serialDebug(2); // instruction step
-              Serial.println();
-              stepNova();
-              break;
-    case 's': serialDebug(1); // debug step; show registers, then execute instruction
-              serialDebug(2); 
-              Serial.println();
-              stepNova();
-              break;
-    case '/': SerialIO=true; // enter IO mode
-              Serial.println("IO mode; @=exit");
-              lcd.setCursor(0, 0);
-              lcd.print(makespc(40));
-              lcd.setCursor(0, 1);
-              lcd.print(makespc(40));
-              lcd.setCursor(0, 0);
-              break;
-    case 'e': { // read 128 byte block a from eeprom
-              Serial.readBytes(m, 4);
-              unsigned int a=makehex(m);
-              int deviceaddress = 0x53;                  
-              if (a>515) deviceaddress+=4;
-              for (int i=0; i<128; i++)
-              { String s;
-                if (a<4) s = toHex2(EEPROM.read(a*128+i));
-                else     s = toHex2(i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i));
-                if ((i&15)==15) Serial.println(s); else Serial.print(s);
-              }
-              break;
-              }
-    case 'w': { // write 16 byte part n(0..7) of 128 byte block a to eeprom
-              Serial.readBytes(m, 5);
-              unsigned int n = makehex(m)>>12;
-              unsigned int a=makehex(m+1);
-              int deviceaddress = 0x53;
-              if (a>515) deviceaddress+=4;
-              Serial.readBytes(m, 32);
-              m[32]=m[33]='0';
-              for (int i=0; i<16; i++) m[i]=makehex(m+i*2)>>8;
-              if (a<4) for (int j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
-              else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
-              break;
-              }
-    case '.': Serial.println("."); // acknowledge
-    case 'V': Serial.println("Arduino code Marcel van Herk " __DATE__);
-              break;
+                lcd.setCursor(0, 1);
+                lcd.print(makespc(40));
+                lcd.setCursor(0, 0);
+                break;
+      case 'e': { // read 128 byte block a from eeprom
+                Serial.readBytes(m, 4);
+                unsigned short a=makehex(m);
+                int deviceaddress = 0x53;                  
+                if (a>515) deviceaddress+=4;
+                for (short i=0; i<128; i++)
+                { String s;
+                  if (a<4) s = toHex2(EEPROM.read(a*128+i));
+                  else     s = toHex2(i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i));
+                  if ((i&15)==15) Serial.println(s); else Serial.print(s);
+                }
+                break;
+                }
+      case 'w': { // write 16 byte part n(0..7) of 128 byte block a to eeprom
+                Serial.readBytes(m, 5);
+                unsigned short n = makehex(m)>>12;
+                unsigned short a=makehex(m+1);
+                int deviceaddress = 0x53;
+                if (a>515) deviceaddress+=4;
+                Serial.readBytes(m, 32);
+                m[32]=m[33]='0';
+                for (short i=0; i<16; i++) m[i]=makehex(m+i*2)>>8;
+                if (a<4) for (short j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
+                else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
+                break;
+                }
+      case '.': Serial.println("."); // acknowledge
+                break;
+      case 'V': Serial.println("Arduino code Marcel van Herk " __DATE__);
+                break;
+      case '!': delay(100);
+                setup();
+                delay(100);
+                break;
+#ifdef TEENSY
+      case '~': InteractiveDebugger = !InteractiveDebugger;
+                Serial.println("Interactive mode");
+                Serial.print(">");
+                break;
+#endif
     }
+  }
+
+#ifdef TEENSY
+  // new interactive mode
+  else 
+  { if (b==27) // read escape key sequences (up and down)
+    { int k = Serial.read();
+      if (k=='[')
+      { k = Serial.read();
+        if (k=='A')
+        { nhist--;
+          if (nhist<0) nhist=0;
+          line = history[nhist];
+          Serial.write("\33[2K\r");
+          Serial.print(">");
+          Serial.print(line);
+        }
+        else if (k=='B')
+        { nhist++;
+          if (nhist>=NHISTORY) nhist=NHISTORY-1;
+          line = history[nhist];
+          Serial.write("\33[2K\r");
+          Serial.print(">");
+          Serial.print(line);
+        }
+      }
+      else Serial.write(k);
+    }
+    else if (b==127 || b==8) // backspace
+    { if (line.length()>0) 
+      { line.remove(line.length()-1);
+        Serial.write(8);
+        Serial.write(32);
+        Serial.write(8);
+      }
+    }
+    else if (b != '\r') 
+    { line.concat(char(b)); 
+      Serial.write(b);
+    }
+
+    // enter
+    if (b == '\r') 
+    { // auto suggest next command
+      if (line=="" && nextcmd!="")
+      { line=nextcmd;
+        Serial.write("\33[2K\r");
+        Serial.print(">");
+        Serial.print(line);
+        nextcmd="";
+        return;
+      }
+  
+      Serial.println();
+
+      // search place to store history and store it
+      nhist=-1;
+      for (int i=0; i<NHISTORY; i++)
+      { if (history[i]=="") 
+        { history[i]=line;
+          nhist=i+1;
+          break;
+        }
+      }
+      if (nhist==-1)
+      { for (int i=1; i<NHISTORY; i++) 
+        { history[i-1]=history[i];
+        }
+        nhist=NHISTORY-1;
+        history[nhist++]=line;
+      }
+
+      // stop Nova when running
+      if (readLights()&1) a=stopNova();
+      pc=readAddr()&0x7fff;
+
+      // show help text
+      if (line.startsWith("help"))
+      { Serial.println(helpstring);
+      }
+
+      // disassemble
+      else if (line.startsWith("list "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        unsigned short a = makeoct(line, pos1);
+        int b = pos2<0 ? 16 : makeoct(line, pos2+1);
+        for (unsigned short i=0; i<b; i++)
+        { Serial.print(toOct(a));
+          unsigned short v=examine(a++);
+          Serial.print(" ");
+          Serial.print(toOct(v));
+          Serial.println(lcdPrintDisas(v, OCT));
+        }
+        nextcmd = "list "+toOct(a)+" "+toOct(b);
+        examine(pc);
+      }
+        
+      // dump memory
+      else if (line.startsWith("dump "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        unsigned short a = makeoct(line, pos1);
+        int b = pos2<0 ? 16 : makeoct(line, pos2+1);
+        for (unsigned short i=0; i<b; i++)
+        { Serial.print(toOct(a));
+          unsigned short v=examine(a++);
+          Serial.print(" ");
+          Serial.println(toOct(v));
+        }
+        nextcmd = "dump "+toOct(a)+" "+toOct(b);
+        examine(pc);
+      }
+
+      // read or set accumulator
+      else if (line.startsWith("ac"))
+      { int pos1 = 2;
+        int pos2 = line.indexOf(' ', 3);
+        unsigned short a = makeoct(line, pos1);
+        if (pos2>=0) depositAC(a, makeoct(line, pos2+1));
+        Serial.println("ac"+String(a)+" = "+toOct(examineAC(a)));
+        if (pos2>=0) nextcmd = "ac"+String((a+1)%4)+" "+toOct(makeoct(line, pos2+1));
+        else nextcmd = "ac"+String((a+1)%4);
+      }
+
+      // read or set pc
+      else if (line.startsWith("pc"))
+      { int pos2 = line.indexOf(' ', 2);
+        if (pos2>=0) examine(makeoct(line, pos2+1));
+        Serial.println("pc = "+toOct(readAddr()&0x7fff));
+        nextcmd = "step";
+      }
+
+      // show all registers
+      else if (line.startsWith("reg"))
+      { for (int a=0; a<4; a++)
+          Serial.println("ac"+String(a)+" = "+toOct(examineAC(a)));
+        Serial.println("pc = "+toOct(readAddr()&0x7fff));
+        Serial.println("carry = "+String(readAddr()>>15));
+        nextcmd = "";
+      }
+
+      // read or set memory location
+      else if (line.startsWith("mem "))
+      { int pos1 = 4;
+        int pos2 = line.indexOf(' ', 5);
+        unsigned short a = makeoct(line, pos1);
+        if (pos2>=0) deposit(a, makeoct(line, pos2+1));
+        Serial.println("mem "+toOct(a)+" = "+toOct(examine(a)));
+        examine(pc);
+        if (pos2>=0) nextcmd = "mem "+toOct(a+1)+" "+toOct(makeoct(line, pos2+1));
+        else nextcmd = "mem "+toOct(a+1);
+      }
+
+      // assemble instruction
+      else if (line.startsWith("asm "))
+      { int pos1 = 4;
+        int pos2 = line.indexOf(' ', 5);
+        unsigned short a = makeoct(line, pos1);
+        if (pos2>=0) {
+          String t=line.substring(pos2);
+          for(int b=0; b<=65535; b++)
+           { if (lcdPrintDisas(b, OCT).equals(t))
+             { deposit(a, b);
+               break;
+             }
+          }
+          nextcmd = "asm "+toOct(a+1)+" ";
+        }
+        Serial.print(toOct(a));
+        unsigned short v=examine(a++);
+        Serial.print(" ");
+        Serial.print(toOct(v));
+        Serial.println(lcdPrintDisas(v, OCT));
+        examine(pc);
+      }
+
+      // run without serial IO
+      else if (line.startsWith("go "))
+      { int pos1 = 3;
+        unsigned short a = makeoct(line, pos1);
+        startNova(a);
+        Serial.println("running");
+        nextcmd = "stop";
+      }
+
+      // run with serial IO
+      else if (line.startsWith("run "))
+      { int pos1 = 4;
+        SerialIO=true;
+        unsigned short a = makeoct(line, pos1);
+        startNova(a);
+        Serial.println("running, use @ to return to command mode");
+        nextcmd = "stop";
+      }
+
+      else if (line.startsWith("reset"))
+      { resetNova();
+        stopNova(); 
+        if(SerialIO or opmode==5) 
+        { Serial.println("interactive mode");
+          SerialIO=false; opmode=0; 
+        }  
+        nextcmd = "";
+      }
+
+      else if (line.startsWith("stop"))
+      { stopNova(); 
+        if(SerialIO or opmode==5) 
+        { Serial.println("interactive mode");
+          SerialIO=false; opmode=0; 
+        }  
+        nextcmd = "continue";
+      }
+
+      else if (line.startsWith("continue"))
+      { continueNova(); 
+        nextcmd = "stop";
+      }
+
+      else if (line.startsWith("init")) {
+        setup();
+        delay(100);
+        nextcmd = "";
+      }
+
+      else if (line.startsWith("version")) {
+        Serial.println("Arduino code Marcel van Herk " __DATE__);
+        nextcmd = "";
+      }
+
+      // load memory from eeprom
+      else if (line.startsWith("load "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        int pos3 = line.indexOf(' ', pos2+1);
+        if (pos2>=0 && pos3>=0)
+        { unsigned short a = makeoct(line, pos1);
+          unsigned short b = makeoct(line, pos2+1);
+          unsigned short c = makeoct(line, pos3+1);
+          unsigned short s=a;
+          for (int block=b; block<b+c; block++,a+=64)
+            readBlockfromEEPROM(block, a);
+          Serial.println("loaded memory "+toOct(s)+ " with " + c + " blocks");
+          nextcmd = "run "+toOct(a);
+        }
+        else
+          nextcmd = "";
+        examine(pc);
+      }
+
+      // save memory to eeprom
+      else if (line.startsWith("save "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        int pos3 = line.indexOf(' ', pos2+1);
+        if (pos2>=0 && pos3>=0)
+        { unsigned short a = makeoct(line, pos1);
+          unsigned short b = makeoct(line, pos2+1);
+          unsigned short c = makeoct(line, pos3+1);
+          unsigned short s=a;
+          for (int block=b; block<b+c; block++,a+=64)
+            writeBlocktoEEPROM(block, a);
+          Serial.println("saved memory "+toOct(s)+ " total of " + c + " blocks");
+        }
+        nextcmd = "";
+        examine(pc);
+      }
+
+      // debug step
+      else if (line.startsWith("step"))
+      { int pos2 = line.indexOf(' ', 4);
+        unsigned short a = pos2>0 ? makeoct(line, pos2+1) : 1;
+        for (int i=0; i<a; i++) {
+          serialDebug(1);
+          serialDebug(2); 
+          Serial.println();
+          stepNova();                  
+        }
+        nextcmd = "step "+toOct(a);
+      }
+
+      // print lights status
+      else if (line.startsWith("lights")) {
+        Serial.println("Data="+toOct(readData())); 
+        Serial.println("Addr="+toOct(readAddr())); 
+        Serial.println("Status="+toOct(readLights()));
+        nextcmd = "";
+      }
+
+      // run test function (may not return)
+      else if (line.startsWith("test "))
+      { int pos1 = 5;
+        unsigned short a = makeoct(line, pos1);
+        tests(a);
+      }
+
+      // set line of LCD
+      else if (line.startsWith("lcd "))
+      { int pos1 = 4;
+        int pos2 = line.indexOf(' ', pos1+1);
+        if (pos2>=0)
+        { unsigned short a = makeoct(line, pos1);
+          if (a<2) 
+          { lcd.setCursor(0, a);
+            lcd.print(makespc(40));
+            lcd.setCursor(0, a);
+            for (unsigned int i=pos2+1; i<line.length(); i++) lcd.write(line[i]);
+          }
+          else
+          { lcd2.setCursor(0, a-2);
+            lcd2.print(makespc(40));
+            lcd2.setCursor(0, a-2);
+            for (unsigned int i=pos2+1; i<line.length(); i++) lcd2.write(line[i]);
+          }
+          nextcmd = "lcd "+String((a+1)%4)+" "+line.substring(pos2+1);
+        }
+      }
+
+      // program leds
+      else if (line.startsWith("led "))
+      { int pos1 = 4;
+        unsigned short a = makeoct(line, pos1);
+        gpio(a & 255);
+        digitalWrite(13, a>>8);
+        nextcmd = "led "+toOct(a+1);
+      }
+          
+      // list eeprom block in hex
+      else if (line.startsWith("eeprom "))
+      { int pos1 = 7;
+        unsigned short a = makeoct(line, pos1);
+        int deviceaddress = 0x53;                  
+        if (a>515) deviceaddress+=4;
+        for (short i=0; i<128; i++)
+        { String s;
+          if (a<4) s = toHex2(EEPROM.read(a*128+i));
+          else     s = toHex2(i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i));
+          if ((i&15)==15) Serial.println(s); else Serial.print(s);
+        }
+        nextcmd = "eeprom "+toOct(a+1);
+      }
+
+      // clear block of memory
+      else if (line.startsWith("clear "))
+      { int pos1 = 6;
+        int pos2 = line.indexOf(' ', 7);
+        int pos3 = line.indexOf(' ', pos2+1);
+        if (pos2>=0)
+        { unsigned short a = makeoct(line, pos1);
+          unsigned short b = makeoct(line, pos2+1);
+          unsigned short c = pos3<0 ? 0 : makeoct(line, pos3+1);
+          unsigned short s=a;
+          for (int i=0; i<b; i++)
+            deposit(s+i, c);
+          Serial.println("cleared memory "+toOct(s)+ " " + toOct(b) + " words to " + toOct(c));
+          nextcmd = "dump "+toOct(a);
+        }
+        else
+          nextcmd = "";
+        examine(pc);
+      }
+
+      // load hex data to memory
+      else if (line.startsWith(":"))
+      { line.toCharArray(m, 50);
+        unsigned short n = makehex(m+1)>>8;
+        unsigned short a=makehex(m+3);
+        if (n<=10) for (unsigned short i=0; i<n; i++) deposit(a++, makehex(m+7+i*4));
+        nextcmd = "";
+      }
+
+      // load hex data (16 bytes) to eeprom
+      else if (line.startsWith(";"))
+      { line.toCharArray(m, 50);
+        unsigned short n = makehex(m+1)>>12;
+        unsigned short a=makehex(m+2);
+        int deviceaddress = 0x53;
+        if (a>515) deviceaddress+=4;
+        for (short i=0; i<16; i++) m[i]=makehex(m+6+i*2)>>8;
+        if (a<4) for (short j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
+        else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
+	      nextcmd = "";
+      }
+
+      // enable previous serial mode
+      else if (line.startsWith("~"))
+      { InteractiveDebugger = !InteractiveDebugger;
+        Serial.println("Normal mode");
+        nextcmd = "";
+      }
+
+      Serial.print(">");
+      line = "";
+    }
+  }
+#endif
 }
 
 // adapted from I2C eeprom library from https://playground.arduino.cc/code/I2CEEPROM
