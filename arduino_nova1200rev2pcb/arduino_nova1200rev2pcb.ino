@@ -77,6 +77,9 @@
 // mvh 20190423 Added auto propose next cmd, history, help and some cleanup
 // mvh 20190424 Added test N, start on 'file system' in eeprom
 // mvh 20190424 Examine 0 after memory sizing; remove hw interrupt
+// mvh 20190425 Discard \n to make work with termux telnet
+//              Added unused teensy pins and DAC to WRITELED command
+//              Added serial dac and adc commands; led command extends to teensy D11 and D12
 
 #define TEENSY
 //Nano to Teensy (3.5 or 3.2) mapping:
@@ -94,6 +97,7 @@
 //A6	X (3.3 V)	---
 //A7	--- (AGND)	---
 //5V	Vin	5V
+// Teensy 3.2 pins A0, A2, A3, A14/DAC, and D11, D12, D13 are free
 
 #include <EEPROM.h>
 
@@ -246,6 +250,7 @@
 #define SKIPBUSYZ  (MOV(3,3)+NOLOAD+SKP) // Always skip
 #define SKIPDONE   067377 // skip when character available
 #define DELAY      067277 // Delay A0 ms, showing A1 on lights
+#define ADC        067177 // Read A0 from teensy
 // 6 are open 06[3,7][1-3]77 except 063077; maybe add 
 // HWMUL, HWDIV, DEVICESEL, SKIPBUSYZ (always skip)
 
@@ -561,12 +566,17 @@ void setup() {
   pinMode(A1, OUTPUT); 
   digitalWrite(7, 1);     // disable both board enables
   digitalWrite(6, 1);
-  pinMode(13, OUTPUT);
+  pinMode(13, OUTPUT); // led
+  pinMode(12, OUTPUT); // free pins
+  pinMode(11, OUTPUT);
+  analogWriteResolution(12);
+  pinMode(A0, INPUT); // ADC command
 #else
   for (byte i=2; i<=11; i++) 
     pinMode(i, OUTPUT);
   digitalWrite(9, 1);     // disable both board enables
   digitalWrite(8, 1);
+  pinMode(A1, INPUT); // ADC command
 #endif
 
 #ifdef CONTROLSWITCHES
@@ -578,7 +588,8 @@ void setup() {
   WriteReg(11, 0);
 
 #ifdef TEENSY
-  pinMode(A4, INPUT);     // control switches are connected via register network to 2 
+  pinMode(A4, INPUT);     // keypad is readout using register network on Y line and LCD4-7 on X wires
+  pinMode(A0, INPUT);     // general purpose ADC
 #endif
 
   lcd.begin(40, 2);   // welcome text on LCD
@@ -1056,6 +1067,7 @@ String lcdPrintDisas(unsigned int v, int octalmode) {
   else if (v==GPIO)             s+=(".GPIO");
   else if (v==SKIPBUSYZ)        s+=(".SKIPBUSYZ");
   else if (v==DELAY)            s+=(".DELAY");
+  else if (v==ADC)              s+=(".ADC");
   else if (v==HALT)             s+=("HALT");    //doc0, 4 bits free
   else if ((v&0xe73f)==0x663f)  s+=(".HALT");   // unused system call
 
@@ -2063,6 +2075,8 @@ String("test n                run test function\r\n")+
 String("version               print version\r\n")+
 String("lcd line text         display line 0..3 on LCD\r\n")+
 String("led N                 progrem GPIO and Arduino LED (400)\r\n")+
+String("adc                   read A0\r\n")+
+String("dac N                 write A14\r\n")+
 String("eeprom block          dump eeprom block to output\r\n")+
 String("init                  init Arduino supervisor\r\n")+
 String(":nnaaaa[hhhh]         Deposit nn memory locations (a and h hex)\r\n")+
@@ -2344,7 +2358,7 @@ void processSerial(int count)
         Serial.write(8);
       }
     }
-    else if (b != '\r') 
+    else if (b != '\r' && b != '\n') 
     { line.concat(char(b)); 
       Serial.write(b);
     }
@@ -2632,10 +2646,26 @@ void processSerial(int count)
       { int pos1 = 4;
         unsigned short a = makeoct(line, pos1);
         gpio(a & 255);
-        digitalWrite(13, a>>8);
+        digitalWrite(13, (a>>8)&1);
+        digitalWrite(12, (a>>9)&1);
+        digitalWrite(11, (a>>10)&1);
         nextcmd = "led "+toOct(a+1);
       }
           
+      // program DAC
+      else if (line.startsWith("dac "))
+      { int pos1 = 4;
+        unsigned short a = makeoct(line, pos1);
+        analogWrite(A14, a);
+        nextcmd = "dac "+toOct(a+1);
+      }
+
+      // read ADC
+      else if (line.startsWith("adc"))
+      { Serial.println("adc0="+toOct(analogRead(A0)));
+        nextcmd = "adc";
+      }
+
       // list eeprom block in hex
       else if (line.startsWith("eeprom "))
       { int pos1 = 7;
@@ -2926,13 +2956,7 @@ void loop() {
       }
       else if (haltInstruction==WRITELED)
       { 
-#ifdef TEENSY
-        digitalWrite(4, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
-        digitalWrite(A6, 1);
-        digitalWrite(A7, 1);
-        digitalWrite(A8, 1);
-        digitalWrite(A9, 1);
-#else
+#ifndef TEENSY
         digitalWrite(6, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
         digitalWrite(A2, 1);
         digitalWrite(A3, 1);
@@ -2940,8 +2964,15 @@ void loop() {
         digitalWrite(A5, 1);
 #endif
         digitalWrite(13, (haltA0&1)!=0);
+#ifdef TEENSY
+        digitalWrite(12, (haltA0&2)!=0);
+        digitalWrite(11, (haltA0&4)!=0);
+	analogWrite(A14, haltA0>>4);
+#endif
+#ifndef TEENSY
         delay(50); // must be shorter than 100 ms above!
         digitalWrite(13, 0);
+#endif
         examine(haltAddress);
         continueNova();
         continue;
@@ -2985,6 +3016,17 @@ void loop() {
       else if (haltInstruction==DELAY)   // delay on arduino
       { examineAC(1); // show ac1 on lights
         delay(haltA0);
+        examine(haltAddress);
+        continueNova();
+        continue;
+      }
+      else if (haltInstruction==ADC)   // adc on teensy
+      { 
+#ifdef TEENSY
+        depositAC(0, analogRead(A0));
+#else
+        depositAC(0, analogRead(A1));
+#endif
         examine(haltAddress);
         continueNova();
         continue;
