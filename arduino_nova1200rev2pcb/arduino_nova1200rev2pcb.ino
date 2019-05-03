@@ -80,6 +80,9 @@
 // mvh 20190425 Discard \n to make work with termux telnet
 //              Added unused teensy pins and DAC to WRITELED command
 //              Added serial dac and adc commands; led command extends to teensy D11 and D12
+// mvh 20190426 Added .mul .div .memcpy .memclr .db
+// mvh 20190501 Added .db; fixed accelerated assembler; dump shows ascii, fix makehex
+//              init will clear lcdpos
 
 #define TEENSY
 //Nano to Teensy (3.5 or 3.2) mapping:
@@ -350,12 +353,12 @@ unsigned short prog4[]={
   MOV(1,0),
   GPIO,
   JMPL(3),
+  LABEL(2),
+  CONSTANT(500),
   LABEL(0),
   LETTERS('H', 'e'),
   LETTERS('l', 'l'),
   LETTERS('o', 0),
-  LABEL(2),
-  CONSTANT(500),
   // assembler tests
   //LABEL(1),
   //JMPL(1),
@@ -557,6 +560,8 @@ void WriteReg(byte n, byte value) {
 #endif
 
 unsigned short memsize=0;
+int lcdpos=0;
+bool clearline=false;
 
 void setup() {
 
@@ -570,13 +575,11 @@ void setup() {
   pinMode(12, OUTPUT); // free pins
   pinMode(11, OUTPUT);
   analogWriteResolution(12);
-  pinMode(A0, INPUT); // ADC command
 #else
   for (byte i=2; i<=11; i++) 
     pinMode(i, OUTPUT);
   digitalWrite(9, 1);     // disable both board enables
   digitalWrite(8, 1);
-  pinMode(A1, INPUT); // ADC command
 #endif
 
 #ifdef CONTROLSWITCHES
@@ -589,9 +592,10 @@ void setup() {
 
 #ifdef TEENSY
   pinMode(A4, INPUT);     // keypad is readout using register network on Y line and LCD4-7 on X wires
-  pinMode(A0, INPUT);     // general purpose ADC
 #endif
 
+  lcdpos=0;
+  clearline=false;
   lcd.begin(40, 2);   // welcome text on LCD
   lcd.setCursor(0, 0);
   lcd.print(F("Nova panel - Marcel van Herk " __DATE__));
@@ -900,12 +904,12 @@ String toOct(unsigned int v) {
 }
 
 // convert 4 digit hex string in buffer
-unsigned int makehex(char *buf)
+unsigned int makehex(char *buf, byte n)
 { unsigned int r=0;
-  for (int i=0; i<4; i++)
+  for (int i=0; i<n; i++)
   { r = r<<4;
-    if (buf[i]>'a') r = r+buf[i]-'a'+10;
-    else if (buf[i]>'A') r = r+buf[i]-'A'+10;
+    if (buf[i]>='a') r = r+buf[i]-'a'+10;
+    else if (buf[i]>='A') r = r+buf[i]-'A'+10;
     else r = r+buf[i]-'0';
   }
   return r;
@@ -2198,20 +2202,20 @@ void processSerial(int count)
       case 'Y': memstepNova(); break;
       case 'O': continueNova(); break;
       case 'o': Serial.readBytes(m, 4); // continue put data on switches
-                continueNovaSw(makehex(m)); 
+                continueNovaSw(makehex(m,4)); 
                 break;
       case 'G': Serial.readBytes(m, 4);
-                startNova(makehex(m));
+                startNova(makehex(m,4));
                 break;
       case 'M': Serial.readBytes(m, 4); // read one Memory location 
-                Serial.println(toHex(examine(makehex(m)))); 
+                Serial.println(toHex(examine(makehex(m,4)))); 
                 break;
       case 'D': Serial.readBytes(m, 8); // Deposit one memory location
-                deposit(makehex(m), makehex(m+4)); break;
+                deposit(makehex(m,4), makehex(m+4,4)); break;
       case 'E': Serial.readBytes(m, 1); // Examine AC
                 Serial.println(toHex(examineAC(m[0]-'0'))); break;
       case 'F': Serial.readBytes(m, 5); // Fill AC
-                depositAC(m[0]-'0', makehex(m+1)); break;
+                depositAC(m[0]-'0', makehex(m+1,4)); break;
       case 'X': Serial.readBytes(m, 1); // Read frontpanel LEDs
                 if (m[0]=='0') Serial.println(toHex(readData())); 
                 if (m[0]=='1') Serial.println(toHex(readAddr())); 
@@ -2234,16 +2238,16 @@ void processSerial(int count)
                 }
       case ':': { // write set of memory locations
                 Serial.readBytes(m, 6);
-                unsigned short n = makehex(m)>>8;
-                unsigned short a=makehex(m+2);
+                unsigned short n = makehex(m,2);
+                unsigned short a=makehex(m+2,4);
                 Serial.readBytes(m, n*4); 
-                for (unsigned short i=0; i<n; i++) deposit(a++, makehex(m+i*4));
+                for (unsigned short i=0; i<n; i++) deposit(a++, makehex(m+i*4,4));
                 break;
                 }
       case '?': { // read set of memory locations
                 Serial.readBytes(m, 6);
-                unsigned short n = makehex(m)>>8;
-                unsigned short a=makehex(m+2);
+                unsigned short n = makehex(m,2);
+                unsigned short a=makehex(m+2,4);
                 for (unsigned short i=0; i<n; i++) 
                   if ((i&7)==7) Serial.println(toHex(examine(a++))); 
                   else Serial.print(toHex(examine(a++)));
@@ -2251,8 +2255,8 @@ void processSerial(int count)
                 }
       case 'l': { // disassemble memory locations
                 Serial.readBytes(m, 6);
-                unsigned short n = makehex(m)>>8;
-                unsigned short a = makehex(m+2);
+                unsigned short n = makehex(m,2);
+                unsigned short a = makehex(m+2,4);
                 for (unsigned short i=0; i<n; i++)
                 { Serial.print(toOct(a));
                   unsigned short v=examine(a++);
@@ -2283,7 +2287,7 @@ void processSerial(int count)
                 break;
       case 'e': { // read 128 byte block a from eeprom
                 Serial.readBytes(m, 4);
-                unsigned short a=makehex(m);
+                unsigned short a=makehex(m,4);
                 int deviceaddress = 0x53;                  
                 if (a>515) deviceaddress+=4;
                 for (short i=0; i<128; i++)
@@ -2296,13 +2300,13 @@ void processSerial(int count)
                 }
       case 'w': { // write 16 byte part n(0..7) of 128 byte block a to eeprom
                 Serial.readBytes(m, 5);
-                unsigned short n = makehex(m)>>12;
-                unsigned short a=makehex(m+1);
+                unsigned short n = makehex(m,1);
+                unsigned short a=makehex(m+1,4);
                 int deviceaddress = 0x53;
                 if (a>515) deviceaddress+=4;
                 Serial.readBytes(m, 32);
                 m[32]=m[33]='0';
-                for (short i=0; i<16; i++) m[i]=makehex(m+i*2)>>8;
+                for (short i=0; i<16; i++) m[i]=makehex(m+i*2,2);
                 if (a<4) for (short j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
                 else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
                 break;
@@ -2430,7 +2434,11 @@ void processSerial(int count)
         { Serial.print(toOct(a));
           unsigned short v=examine(a++);
           Serial.print(" ");
-          Serial.println(toOct(v));
+          Serial.print(toOct(v));
+          Serial.print(" ");
+          Serial.print(char(max(v>>8,32)));
+          Serial.print(char(max(v&255,32)));
+          Serial.println("");
         }
         nextcmd = "dump "+toOct(a)+" "+toOct(b);
         examine(pc);
@@ -2482,12 +2490,43 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', 5);
         unsigned short a = makeoct(line, pos1);
         if (pos2>=0) {
-          String t=line.substring(pos2);
-          for(int b=0; b<=65535; b++)
-           { if (lcdPrintDisas(b, OCT).equals(t))
-             { deposit(a, b);
-               break;
-             }
+          String t=line.substring(pos2).toLowerCase();
+
+	        // shortcuts to frequent routines, must be in memory to work
+	        if      (t==" .mul"   ) deposit(a, 0x043e); // JMS @3e etc
+          else if (t==" .div"   ) deposit(a, 0x043f);
+          else if (t==" .sys"   ) deposit(a, 0x0440);
+          else if (t==" .memclr") deposit(a, 0x045b);
+          else if (t==" .memcpy") deposit(a, 0x045c);
+          else if (t.startsWith(" .db "))     // .db num or .db "string"
+          { int pos3 = t.indexOf('"');
+            if (pos3>0)
+            { int pos4=t.indexOf('"',pos3+1);
+              t = t.substring(pos3+1, pos4);
+              int j=t.length()+1;
+              if (j&1) j++;
+              for (int i=0; i<j; i+=2, a++)
+                deposit(a, ((t[i]<<8)+t[i+1]));
+              a--;
+            }
+            else
+            { pos3 = t.indexOf(' ', 4);
+              unsigned short b = makeoct(t, pos3+1);
+              deposit(a, b);
+            }
+          }
+
+          else for(int b=0; b<=65535;)
+          { String s = lcdPrintDisas(b, OCT).toLowerCase();
+            if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
+              b+=63; 
+            // must be different instruction (all coded in high 10 bits)
+            else if (s.equals(t))
+            { deposit(a, b);
+              break;
+            }
+            else 
+              b++;
           }
           nextcmd = "asm "+toOct(a+1)+" ";
         }
@@ -2662,7 +2701,14 @@ void processSerial(int count)
 
       // read ADC
       else if (line.startsWith("adc"))
-      { Serial.println("adc0="+toOct(analogRead(A0)));
+      { 
+#ifdef TEENSY
+        pinMode(A0, INPUT);
+        Serial.println("adc0="+toOct(analogRead(A0)));
+#else
+        pinMode(A1, INPUT);
+        Serial.println("adc1="+toOct(analogRead(A1)));
+#endif
         nextcmd = "adc";
       }
 
@@ -2704,20 +2750,20 @@ void processSerial(int count)
       // load hex data to memory
       else if (line.startsWith(":"))
       { line.toCharArray(m, 50);
-        unsigned short n = makehex(m+1)>>8;
-        unsigned short a=makehex(m+3);
-        if (n<=10) for (unsigned short i=0; i<n; i++) deposit(a++, makehex(m+7+i*4));
+        unsigned short n = makehex(m+1,2);
+        unsigned short a=makehex(m+3,4);
+        if (n<=10) for (unsigned short i=0; i<n; i++) deposit(a++, makehex(m+7+i*4,4));
         nextcmd = "";
       }
 
       // load hex data (16 bytes) to eeprom
       else if (line.startsWith(";"))
       { line.toCharArray(m, 50);
-        unsigned short n = makehex(m+1)>>12;
-        unsigned short a=makehex(m+2);
+        unsigned short n = makehex(m+1,1);
+        unsigned short a=makehex(m+2,4);
         int deviceaddress = 0x53;
         if (a>515) deviceaddress+=4;
-        for (short i=0; i<16; i++) m[i]=makehex(m+6+i*2)>>8;
+        for (short i=0; i<16; i++) m[i]=makehex(m+6+i*2,2);
         if (a<4) for (short j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
         else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
 	      nextcmd = "";
@@ -2803,15 +2849,13 @@ int keyon = 0;                      // set when key is down
 unsigned long previousMillis = 0;   // will store last time LED was updated
 unsigned long kbMillis = 0xfffffff; // will store time keypad key was pressed
 int kbkey=0;                        // detected key 1..12 on keypad
-int lcdpos=0;
-bool clearline=false;
 
 // write character to LCD interpreting minimal control codes
 void putLCD(byte b)
 { lcdpos = lcdpos % 160;
   if      (b==12) { lcd.clear(); lcd2.clear(); lcdpos=0; }
   else if (b==13) { lcdpos = lcdpos - lcdpos%40; clearline=true; }
-  else if (b==10) { lcdpos = lcdpos + 40; ; clearline=true; }
+  else if (b==10) { lcdpos = lcdpos + 40; clearline=true; }
   else 
   { if (lcdpos<80)
     { lcd.setCursor(lcdpos%40, floor(lcdpos/40));
@@ -2936,19 +2980,28 @@ void loop() {
       }
       else if (haltInstruction==MESSAGE) // write character string from address in A2
       { int a = examineAC(2);
+        bool flag=false;
         for (int i=0; i<40; i++)
         { unsigned short s=examine(a+i);
           unsigned short s2=examine(a+i+1);
           byte b = s>>8;
           if (b==0) break;
-          if (b=='%') Serial.print(toOct(examineAC(s&3)));
-          else Serial.write(b);
-          putLCD(b);
+          if (!flag)
+          { if (b=='%') { Serial.print(toOct(examineAC(s&3))); flag=true; }
+            else Serial.write(b);
+            putLCD(b);
+          }
+          else
+            flag=false;
           b = s&255;
           if (b==0) break;
-          if (b=='%') Serial.print(toOct(examineAC((s2>>8)&3)));
-          else Serial.write(b);
-          putLCD(b);
+          if (!flag)
+          { if (b=='%') { Serial.print(toOct(examineAC((s2>>8)&3))); flag=true; }
+            else Serial.write(b);
+            putLCD(b);
+          }
+          else
+            flag=false;
         }
         examine(haltAddress);
         continueNova();
@@ -3023,8 +3076,10 @@ void loop() {
       else if (haltInstruction==ADC)   // adc on teensy
       { 
 #ifdef TEENSY
+        pinMode(A0, INPUT);
         depositAC(0, analogRead(A0));
 #else
+        pinMode(A1, INPUT);
         depositAC(0, analogRead(A1));
 #endif
         examine(haltAddress);
