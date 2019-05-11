@@ -83,6 +83,8 @@
 // mvh 20190426 Added .mul .div .memcpy .memclr .db
 // mvh 20190501 Added .db; fixed accelerated assembler; dump shows ascii, fix makehex
 //              init will clear lcdpos
+// mvh 20190508 Typo in serial manual
+// mvh 20190511 Added ? to serial mode to quickly read all lights
 
 #define TEENSY
 //Nano to Teensy (3.5 or 3.2) mapping:
@@ -2078,13 +2080,14 @@ String("save addr block cnt   save RAM to eeprom blocks\r\n")+
 String("test n                run test function\r\n")+
 String("version               print version\r\n")+
 String("lcd line text         display line 0..3 on LCD\r\n")+
-String("led N                 progrem GPIO and Arduino LED (400)\r\n")+
+String("led N                 program GPIO and Arduino LED (400)\r\n")+
 String("adc                   read A0\r\n")+
 String("dac N                 write A14\r\n")+
 String("eeprom block          dump eeprom block to output\r\n")+
 String("init                  init Arduino supervisor\r\n")+
 String(":nnaaaa[hhhh]         Deposit nn memory locations (a and h hex)\r\n")+
 String(";naaaa[hh*16]         Write line n in eeprom block (a and h hex)\r\n")+
+String("?                     Write all lights values AAAADDDDSS in hex\r\n")+
 String("~                     Switch to non-interactive mode\r\n")+
 String("help                  Show this text\r\n")+
 String("(enter)               automatically propose next command");
@@ -2767,6 +2770,12 @@ void processSerial(int count)
         if (a<4) for (short j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
         else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
 	      nextcmd = "";
+      }
+
+      else if (line.startsWith("?"))
+      { Serial.print(toHex(readAddr())); 
+        Serial.print(toHex(readData())); 
+        Serial.println(toHex2(readLights()));
       }
 
       // enable previous serial mode
