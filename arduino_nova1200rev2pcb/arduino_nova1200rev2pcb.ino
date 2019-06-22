@@ -85,6 +85,11 @@
 //              init will clear lcdpos
 // mvh 20190508 Typo in serial manual
 // mvh 20190511 Added ? to serial mode to quickly read all lights
+// mvh 20190512 ? will propose ?; added memory command to hex dump block
+// mvh 20190602 Started coding FFT and CT reconstruction 
+// mvh 20190609 $ will dump all registers in hex
+// mvh 20190610 Added vis and plot command; fix memory command
+// mvh 20190610 % in MESSAGE will now print signed decinal; fix warning in vis command
 
 #define TEENSY
 //Nano to Teensy (3.5 or 3.2) mapping:
@@ -306,6 +311,19 @@ unsigned short prog1[]={
   END
 };
 
+enum {MULTA=2, MULT=3, MULTADD=10, MULTADD1, MULTSUB, MULTSUB1, BUTTERFLY, STRETCH, const128};
+
+#define ARG 4 // used for arithmatic routines
+#define RE  5 // used for arithmatic routines
+#define IM  6 // used for arithmatic routines
+#define LEFTP  7 // used for arithmatic routines
+#define RIGHTP 8 // used for arithmatic routines
+#define dx 9 // used for arithmatic routines
+#define dx1 10 // used for arithmatic routines
+#define counter 11 // used for arithmatic routines
+
+// butterfly table access: AC2[0]=SIN, AC2[1]=COS, AC2[2]=LEFTP, AC2[3]=RIGHTP
+
 unsigned short prog2[]={
   SUB(0, 0),
   SUB(2, 2),
@@ -316,20 +334,177 @@ unsigned short prog2[]={
   INC(2,2)+SZR,
   JMPL(1),
   HALT,
-  LABEL(2),   // MULTIPLY
+
+  // AC0/1 = AC1*AC2
+  LABEL(MULT),   // MULTIPLY
+  SUB(0, 0),
+  // AC0/1 = AC0+AC1*AC2
+  LABEL(MULTA),   // MULTIPLY AND ADD
   STAL(3, AUTO),
-  LDAL(3, 4), // -16
-  LABEL(3),   // LOOP
+  LDAL(3, MULT+2), // -16
+  LABEL(MULT+1),   // LOOP
   MOV(1, 1)+SR+SNC,
   MOV(0, 0)+SR+SKP,
-  ADD(2, 0)+SR,
+  ADD(2, 0)+SR+CZ,
   INC(3, 3)+SZR,
-  JMPL(3),
+  JMPL(MULT+1),
   MOV(1, 1)+SR,
   JMPL(AUTO+IND), // RETURN
   HALT,
-  LABEL(4),
+  LABEL(MULT+2),
   CONSTANT(-16),
+
+  // AC0/1 += AC2[0]*ARG
+  LABEL(MULTADD),   // MULTIPLY AND ADD
+  STAL(3, AUTO+1),
+  STAL(0, AUTO+2),
+  STAL(1, AUTO+3),
+  STAL(2, AUTO+4),
+  LDA(1, 0)+AC2,
+  LDA(2, ARG),
+  JSRL(MULT),
+  LDAL(2, AUTO+2),
+  LDAL(3, AUTO+3),
+  ADD(3, 1)+CZ+SZC,
+  INC(2, 2),
+  ADD(2, 0),
+  LDAL(2, AUTO+2),
+  JMPL(AUTO+1+IND), // RETURN
+
+  // AC0/1 += AC2[1]*ARG
+  LABEL(MULTADD1),   // MULTIPLY AND ADD 1
+  STAL(3, AUTO),
+  STAL(0, AUTO+1),
+  STAL(1, AUTO+2),
+  STAL(2, AUTO+3),
+  LDA(1, 1)+AC2,
+  LDA(2, ARG),
+  JSRL(MULT),
+  LDAL(2, AUTO+1),
+  LDAL(3, AUTO+2),
+  ADD(3, 1)+CZ+SZC,
+  INC(2, 2),
+  ADD(2, 0),
+  LDAL(2, AUTO+1),
+  JMPL(AUTO+IND), // RETURN
+
+  // AC0/1 -= AC2[0]*ARG
+  LABEL(MULTSUB),   // MULTIPLY AND SUBTRACT
+  STAL(3, AUTO),
+  STAL(0, AUTO+1),
+  STAL(1, AUTO+2),
+  STAL(2, AUTO+3),
+  LDA(1, 0)+AC2,
+  LDA(2, ARG),
+  JSRL(MULT),
+  LDAL(2, AUTO+1),
+  LDAL(3, AUTO+2),
+  SUB(3, 1)+CZ+SZC,
+  SUB(2, 0)+SKP,
+  ADDC(2, 0),
+  LDAL(2, AUTO+1),
+  JMPL(AUTO+IND), // RETURN
+
+  // AC0/1 -= AC2[1]*ARG
+  LABEL(MULTSUB1),   // MULTIPLY AND SUBTRACT 1
+  STAL(3, AUTO),
+  STAL(0, AUTO+1),
+  STAL(1, AUTO+2),
+  STAL(2, AUTO+3),
+  LDA(1, 1)+AC2,
+  LDA(2, ARG),
+  JSRL(MULT),
+  LDAL(2, AUTO+1),
+  LDAL(3, AUTO+2),
+  SUB(3, 1)+CZ+SZC,
+  SUB(2, 0)+SKP,
+  ADDC(2, 0),
+  LDAL(2, AUTO+1),
+  JMPL(AUTO+IND), // RETURN
+
+  // BUTTERFLY, AC2 POINTS to FFT TABLE
+  LABEL(BUTTERFLY),
+  STAL(3, AUTO),
+
+  // RE = cos*array[right]-sin*array[right+1]
+  LDA(3, 1)+AC2, //cos
+  STA(3, ARG),
+  SUB(0, 0),
+  SUB(1, 1),
+  INC(2, 2),
+  INC(2, 2),
+  INC(2, 2), // AC2 points to right
+  JSRL(MULTADD),
+  LDA(3, -3)+AC2, //sin
+  STA(3, ARG),
+  JSRL(MULTSUB1),
+  STA(1, RE),
+
+  // IM = sin*array[right]+cos*array[right+1]
+  SUB(0, 0),
+  SUB(1, 1),
+  JSRL(MULTADD),
+  LDA(3, -2)+AC2, //cos
+  STA(3, ARG),
+  JSRL(MULTADD1),
+  STA(1, IM),
+
+  NEG(2, 3),
+  INC(3, 3),
+  NEG(3, 3), // AC3 points to left
+
+  // array[right] = array[left]-re
+  LDA(0, 0)+AC3,
+  LDA(1, RE),
+  SUB(1, 0),
+  STA(0, 0)+AC2,
+  
+  // array[right+1] = array[left+1]-im
+  LDA(0, 1)+AC3,
+  LDA(1, IM),
+  SUB(1, 0),
+  STA(0, 1)+AC2,
+  
+  // array[left] = array[left]+re
+  LDA(0, 0)+AC2,
+  LDA(1, RE),
+  ADD(1, 0),
+  STA(0, 0)+AC2,
+  
+  // array[left+1] = array[left+1]+im
+  LDA(0, 1)+AC2,
+  LDA(1, IM),
+  ADD(1, 0),
+  STA(0, 1)+AC2,
+
+  INC(2, 2),    // AC2 points to next butterfly
+  JMPL(AUTO+IND), // RETURN from BUTTERFLY
+
+
+  // AC2[i] = ARG[j], where j= I*scale+offset
+  LABEL(STRETCH),
+  STAL(3, AUTO),
+  LDA(3, const128),
+  NEG(3, 3),
+  STA(3, counter),
+  LABEL(STRETCH+1),
+  LDA(3, ARG),
+  ADD(3, 1),
+  LDA(3, 0)+AC3,
+  STA(2, 0)+AC2,
+  INC(2, 2),
+  LDA(3, dx),
+  ADD(3, 0)+CZ+SZC,
+  INC(1, 1),
+  LDA(3, dx1),
+  ADD(3, 1),
+  ISZ(counter),
+  JMPL(STRETCH+1),
+  JMPL(AUTO+IND), // RETURN from STRETCH
+
+  LABEL(const128),
+  DW(128),
+  
   END
 };
 
@@ -375,7 +550,7 @@ unsigned short prog4[]={
 // assemble unsigned short array as above to location 'to' in Nova; interpreting labels
 void assemble(int to, unsigned short *prog)
 { unsigned int i=0, j=to, a, Auto;
-  unsigned short labels[20];
+  unsigned short labels[200];
   
   // 2 pass assembler; pass 1 collects labels only
   do
@@ -2083,11 +2258,14 @@ String("lcd line text         display line 0..3 on LCD\r\n")+
 String("led N                 program GPIO and Arduino LED (400)\r\n")+
 String("adc                   read A0\r\n")+
 String("dac N                 write A14\r\n")+
-String("eeprom block          dump eeprom block to output\r\n")+
+String("eeprom block          hex dump eeprom block to output\r\n")+
+String("memory address        hex dump memory block to output\r\n")+
+String("plot address range    plot 80 values (+/- range)\r\n")+
+String("vis address count     visualize memory as gray scale, default 1600 chars\r\n")+
 String("init                  init Arduino supervisor\r\n")+
 String(":nnaaaa[hhhh]         Deposit nn memory locations (a and h hex)\r\n")+
 String(";naaaa[hh*16]         Write line n in eeprom block (a and h hex)\r\n")+
-String("?                     Write all lights values AAAADDDDSS in hex\r\n")+
+String("? $                   Write in hex ?lights ADSS $regs 1234pC\r\n")+
 String("~                     Switch to non-interactive mode\r\n")+
 String("help                  Show this text\r\n")+
 String("(enter)               automatically propose next command");
@@ -2730,6 +2908,18 @@ void processSerial(int count)
         nextcmd = "eeprom "+toOct(a+1);
       }
 
+      // list memory block in hex
+      else if (line.startsWith("memory "))
+      { int pos1 = 7;
+        unsigned short a = makeoct(line, pos1);
+        for (short i=0; i<64; i++)
+        { String s;
+          s = toHex(examine(a+i));
+          if ((i&7)==7) Serial.println(s); else Serial.print(s);
+        }
+        nextcmd = "memory "+toOct(a+64);
+      }
+
       // clear block of memory
       else if (line.startsWith("clear "))
       { int pos1 = 6;
@@ -2776,6 +2966,15 @@ void processSerial(int count)
       { Serial.print(toHex(readAddr())); 
         Serial.print(toHex(readData())); 
         Serial.println(toHex2(readLights()));
+        nextcmd = "?";
+      }
+
+      // dump all registers in hex
+      else if (line.startsWith("$"))
+      { for (int a=0; a<4; a++)
+          Serial.print(toHex(examineAC(a)));
+        Serial.println(toHex(readAddr()));
+        nextcmd = "";
       }
 
       // enable previous serial mode
@@ -2783,6 +2982,47 @@ void processSerial(int count)
       { InteractiveDebugger = !InteractiveDebugger;
         Serial.println("Normal mode");
         nextcmd = "";
+      }
+
+      // visualize memory as gray scale a=address b=length of visualization (default 1600 = 20 lines)
+      else if (line.startsWith("vis "))
+      { int pos1 = 4;
+        int pos2 = line.indexOf(' ', 5);
+        unsigned short a = makeoct(line, pos1);
+        int b = pos2<0 ? 1600 : makeoct(line, pos2+1);
+        for (unsigned short i=0; i<b; i++)
+        { unsigned short v=examine(a++);
+          char visual[]=" .:-=+*#%@";
+          short w = v/2048;
+          if (v>=32768) Serial.print("-");
+          else if (w>=(int)strlen(visual)) Serial.print("+");
+          else Serial.write(visual[w]);
+          if (i%80==79) Serial.println("");
+        }
+        nextcmd = "vis "+toOct(a)+" "+toOct(b);
+        examine(pc);
+      }
+
+      // plot memory a=address b=value range (applied positive and negative)
+      else if (line.startsWith("plot "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        unsigned short a = makeoct(line, pos1);
+        int b = pos2<0 ? 32767 : makeoct(line, pos2+1);
+        short vals[80];
+        for (unsigned short i=0; i<80; i++) 
+          vals[i] = examine(a++);
+        for (short i=10; i>=-10; i--)
+        { for (unsigned short j=0; j<80; j++)
+          {  short v = (10*(int)vals[j] + b/2)/b;
+             if (v==i) Serial.print("*");
+             else if (i==0) Serial.print("-");
+             else Serial.print(" ");
+           }
+          Serial.println("");
+        }
+        nextcmd = "plot "+toOct(a)+" "+toOct(b);
+        examine(pc);
       }
 
       Serial.print(">");
@@ -2996,7 +3236,7 @@ void loop() {
           byte b = s>>8;
           if (b==0) break;
           if (!flag)
-          { if (b=='%') { Serial.print(toOct(examineAC(s&3))); flag=true; }
+          { if (b=='%') { Serial.print(String((short)examineAC(s&3))); flag=true; }
             else Serial.write(b);
             putLCD(b);
           }
@@ -3005,7 +3245,7 @@ void loop() {
           b = s&255;
           if (b==0) break;
           if (!flag)
-          { if (b=='%') { Serial.print(toOct(examineAC((s2>>8)&3))); flag=true; }
+          { if (b=='%') { Serial.print(String((short)examineAC((s2>>8)&3))); flag=true; }
             else Serial.write(b);
             putLCD(b);
           }
