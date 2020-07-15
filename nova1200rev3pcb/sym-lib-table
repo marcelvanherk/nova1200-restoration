@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name nova1200_fptest-rescue)(type Legacy)(uri ${KIPRJMOD}/nova1200_fptest-rescue.lib)(options "")(descr ""))
+)
