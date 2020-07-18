@@ -4559,4 +4559,6 @@ Text Notes 12200 4950 0    50   ~ 0
 Disconnect for teensy4
 Text Notes 10650 6100 0    50   ~ 0
 Move to 3.3V for Teensy4
+Text Notes 2400 10850 0    50   ~ 0
+Todo: 3v3 vs 5v jumper at DWP\nLevel shifter for I2C connection, lightint\nCheck SPI connector conforms to IL9341 display\nFix few bugs under dotted boxes\nCan it drive original front panel?\nRemove arduino socket?
 $EndSCHEMATC
