@@ -25,7 +25,8 @@
 // 20200713: TTO works when calling from nova.simh; lights: C, ION, RUN,FETCH,DEFER=running, EXEC=off
 //           Prog load is restore (down) store (up); Todo: step key
 //           Accelerated EEPROM read; basic2 tape; fix simulated step;
-// 20200714: Allow to work on Teensy3.5 (how tested) with few lights and switches and single I2C display
+// 20200714: Allow to work on Teensy3.5 with few lights and switches and single I2C display
+// 20200717: Removed c_str casts, few TEENSY35 fixes, I2C delay to 1us (0us works too, but 1 more stable)
 
 #include <U8g2lib.h>
 #include <EEPROM.h>
@@ -1276,7 +1277,7 @@ void WireBegin() {
     if (wireFail) return;
     pinMode(A8, OUTPUT);
     pinMode(A9, OUTPUT);
-    Wire.setDelay_us(3);
+    Wire.setDelay_us(1);
     Wire.setRxBuffer(rxbuffer, 64);
     Wire.setTxBuffer(txbuffer, 64);
     configured = true;
@@ -1304,8 +1305,10 @@ byte readByte(byte chip, byte reg) {
 
 // write Nova Data bus, should not be called when physically connected to Nova
 int NovaModeD=0;
+#ifdef TEENSY35
 static unsigned char XBM[32];
 int del=0;
+#endif
 
 void writeData(int A)
 { 
@@ -1669,7 +1672,7 @@ Register list on 74LS173 chips:
 7 = write control H (was 11)
 */
 
-// write Nova Data or Instruction register nibble to 73LS173 register
+// write Nova Data or Instruction register nibble to 74LS173 register
 void WriteReg(byte chip, byte value) {
 #ifdef TEENSY35
   return;
@@ -2007,12 +2010,15 @@ void resetNova(void)
 
 // assume 4x6 font, define width (128/4) and height (32/6)
 #define defaultFont u8g2_font_4x6_mf //u8g2_font_tinytim_tf
-#define U8LOG_WIDTH 16
+#define U8LOG_WIDTH 32
 #define U8LOG_HEIGHT 5
 uint8_t u8log_buffer[U8LOG_WIDTH*U8LOG_HEIGHT];
 
 // drive 4051 multiplexer for 5 I2C displays 0=left, 4=right
 void selectDisplay(byte disp) {
+#ifdef TEENSY35
+  return;
+#endif
   static bool configured = false;
   if (!configured) {
     pinMode(9, OUTPUT);  // ENOLED0
@@ -2031,7 +2037,7 @@ bool DrawCursor=false;
 void lcdprint(String text)
 { selectDisplay(0);
   u8g2.setFont(defaultFont);
-  u8g2.print(text.c_str());
+  u8g2.print(text);
   u8g2.sendBuffer();
 }
 
@@ -2084,11 +2090,12 @@ void lcdclearline(int y)
 }
 
 // display text with large font on selected arbitrary display
-void display(byte disp, const char* text)
+void display(byte disp, String text)
 { selectDisplay(disp);
   u8g2.clearBuffer(); 
   u8g2.setFont(u8g2_font_logisoso16_tr);
-  u8g2.drawStr(8,29,text);
+  u8g2.setCursor(8, 29);
+  u8g2.print(text);
   u8g2.sendBuffer();
   u8g2.setFont(defaultFont);  
 }
@@ -2482,13 +2489,13 @@ void printHelp(String a)
 void lcdPrintDebug(void) {
   lcdclear(); // clear screen
 #ifdef SIMULATED
+  unsigned int pc = NovaPC;
+  unsigned int carry = NovaC!=0;
+  unsigned int in = NovaMem[NovaPC], a0, a1, a2=0, a3=0;
+#else
   unsigned int pc = readAddr()&0x7fff;
   unsigned int carry = readAddr()&0x8000;
   unsigned int in = readData(), a0, a1, a2=0, a3=0;
-#else
-  unsigned int pc = NovaPC;
-  unsigned int carry = novaC!=0;
-  unsigned int in = NovaMem[NovaPC], a0, a1, a2=0, a3=0;
 #endif
   lcdsetCursor(0,0);    // print 4 accumulators
   lcdprint("ac0:");
@@ -2764,7 +2771,7 @@ void tests(int func)
       writeDataReg(i<<8);
       writeInstReg(i);
       i++;
-      display(0, String(i).c_str());
+      display(0, String(i));
       delay (50);
       if (readKeys()) break;
     }
@@ -3921,7 +3928,7 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', pos1+1);
         if (pos2>=0)
         { unsigned short a = readOct(line, pos1);
-          display(a, line.substring(pos2+1).c_str());
+          display(a, line.substring(pos2+1));
           nextcmd = "lcd "+String((a+1)%5)+" "+line.substring(pos2+1);
         }
       }
