@@ -89,7 +89,16 @@
 // mvh 20190602 Started coding FFT and CT reconstruction 
 // mvh 20190609 $ will dump all registers in hex
 // mvh 20190610 Added vis and plot command; fix memory command
-// mvh 20190610 % in MESSAGE will now print signed decinal; fix warning in vis command
+// mvh 20190610 % in MESSAGE will now print signed decimal; fix warning in vis command
+// mvh 20190715 Added support for serial port to Nova
+// mvh 20190717 Added tape loaded tape FILENAME (max 12 characters)
+// mvh 20190720 tape list, store, restore, fp xx, HALT at xxx
+// TODO: mode to list serial reply in hex
+// Do I need to keep @ as cancel for direct mode? 
+// Allow longer filenames for tape command
+// continue to restore serial IO
+// Add echo file command to load tape as input
+// Test checksum in tape loader
 
 #define TEENSY
 //Nano to Teensy (3.5 or 3.2) mapping:
@@ -769,6 +778,9 @@ void setup() {
 
 #ifdef TEENSY
   pinMode(A4, INPUT);     // keypad is readout using register network on Y line and LCD4-7 on X wires
+  Serial2.setTX(31);
+  Serial2.setRX(26);
+  Serial2.begin(4800,SERIAL_8N1);
 #endif
 
   lcdpos=0;
@@ -2245,6 +2257,7 @@ String("list address[ length] list assembly (numbers are octal)\r\n")+
 String("asm addr INST         assemble to memory (slow, INST exactly as disassembled)\r\n")+
 String("go addr               run at memory location\r\n")+
 String("run addr              run at memory location, serial input passed to program\r\n")+
+String("fp val                Set front panel switches\r\n")+
 String("step [ count]         debug step count instructions\r\n")+
 String("reset                 reset nova\r\n")+
 String("stop                  stop nova\r\n")+
@@ -2252,6 +2265,10 @@ String("continue              continue nova\r\n")+
 String("clear addr cnt [ val] clear block of memory with value\r\n")+
 String("load addr block cnt   load RAM from eeprom blocks\r\n")+
 String("save addr block cnt   save RAM to eeprom blocks\r\n")+
+String("store                 store all RAM to highest eeprom blocks\r\n")+
+String("restore               restore RAM from highest eeprom blocks\r\n")+
+String("tape filename         Load tape data from eeprom\r\n")+
+String("tape list             List all tapes in eeprom\r\n")+
 String("test n                run test function\r\n")+
 String("version               print version\r\n")+
 String("lcd line text         display line 0..3 on LCD\r\n")+
@@ -2330,8 +2347,8 @@ bool InteractiveDebugger=false;     // if set serial debugger is more interactiv
 void processSerial(int count)
 { byte b = Serial.read();
   char m[50];
-  int a;
   int pc;
+  int a;
 
   if (SerialIO or opmode==5) 
   { if (b=='@') 
@@ -2339,8 +2356,20 @@ void processSerial(int count)
       opmode=0;
       Serial.println("interactive mode");
     }
+    else if (b==3)
+    { SerialIO=false;
+      opmode=0;
+      stopNova();
+      Serial.println("ctrl-C");
+      Serial.print(">");
+      return;
+    }
     else
-    { bool runn = readLights()&1;
+    { 
+#ifdef TEENSY
+      Serial2.write(b);
+#else
+      bool runn = readLights()&1;
       if (runn) a=stopNova();
       deposit(CHARIN, b);
       if (runn) 
@@ -2356,7 +2385,9 @@ void processSerial(int count)
           continueNovaSw(b);
         }
       }
+#endif
     }
+    return;
   }
 
   // ctrl-C
@@ -2793,6 +2824,19 @@ void processSerial(int count)
         examine(pc);
       }
 
+      // restore memory from eeprom
+      else if (line.startsWith("restore"))
+      { unsigned short a = 0;
+        unsigned short b = 1028-memsize/128;
+        unsigned short c = memsize/128;
+        unsigned short s=a;
+        for (int block=b; block<b+c; block++,a+=64)
+          readBlockfromEEPROM(block, a);
+        Serial.println("loaded memory "+toOct(s)+ " with " + c + " blocks");
+        nextcmd = "run "+toOct(a);
+        examine(pc);
+      }
+
       // save memory to eeprom
       else if (line.startsWith("save "))
       { int pos1 = 5;
@@ -2807,6 +2851,19 @@ void processSerial(int count)
             writeBlocktoEEPROM(block, a);
           Serial.println("saved memory "+toOct(s)+ " total of " + c + " blocks");
         }
+        nextcmd = "";
+        examine(pc);
+      }
+
+      // store memory to eeprom
+      else if (line.startsWith("store"))
+      { unsigned short a = 0;
+        unsigned short b = 1028-memsize/128;
+        unsigned short c = memsize/128;
+        unsigned short s=a;
+        for (int block=b; block<b+c; block++,a+=64)
+          writeBlocktoEEPROM(block, a);
+        Serial.println("saved memory "+toOct(s)+ " total of " + c + " blocks");
         nextcmd = "";
         examine(pc);
       }
@@ -3025,6 +3082,117 @@ void processSerial(int count)
         examine(pc);
       }
 
+      // write serial character
+      else if (line.startsWith("serw "))
+      { int pos1 = 5;
+        unsigned short a = makeoct(line, pos1);
+        Serial2.write(a);
+        nextcmd = "serw "+toOct(a+1);
+      }
+
+      // set front panel switches
+      else if (line.startsWith("fp "))
+      { int pos1 = 3;
+        unsigned short a = makeoct(line, pos1);
+        CurrentSwitchValue=a;
+      }
+
+      // absolute tape loader using data in eeprom; tape data is stored after 16 bytes $$llFILENAME@; where ll is its 16 bits length
+      else if (line.startsWith("tape "))
+      { int pos1 = 5;
+        String filename = line.substring(pos1, 99).toUpperCase(); // +"@";
+        byte fname[16], ename[16];
+        filename.getBytes(fname, 16);
+        int deviceaddress = 0x53;                  
+          
+        // search all 128 character blocks on external eeprom (address 4 and up)
+        int block=-1;
+        for(int a=4; a<1028; a++)
+        { if (a>515) deviceaddress+=4;
+          block = -1;
+          if (i2c_eeprom_read_byte(deviceaddress, (a-4)*128+0)=='$')
+          { if (i2c_eeprom_read_byte(deviceaddress, (a-4)*128+1)=='$')
+            { block = a;
+              for (unsigned short i=0; i<16; i++)
+              { ename[i] = i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i+4);
+                if (ename[i]==0) 
+                { break;
+                }
+                if (fname[i]!=ename[i] && block!=-1) 
+                { block=-1;
+                }
+              }
+              if (filename=="LIST")
+              { String str((char *)ename);
+                int len = i2c_eeprom_read_byte(deviceaddress, (a-4)*128+2) + i2c_eeprom_read_byte(deviceaddress, (a-4)*128+3)*256;
+                Serial.println(str+" at block "+toOct(a)+"; length "+toOct(len)+" next block: "+toOct(a+(int)ceil((len+16)/128)));
+              }
+            }
+          }
+          if (block>=4) break;
+        }
+        if (block>=0 && filename!="LIST")
+        { block-=4;
+          int len = i2c_eeprom_read_byte(deviceaddress, block*128+2) + i2c_eeprom_read_byte(deviceaddress, block*128+3)*256;
+          Serial.println("Loading tape "+filename+" at eeprom block "+toOct(block)+"; length "+toOct(len)+" next block: "+toOct(block+(int)ceil((len+16)/128)));
+          Serial.println("Block:Address");
+          int a=block*128+16, i=0, startaddress=0xffff;
+          i=0;
+          // skip zero preamble
+          while (i<len)
+          { if (i2c_eeprom_read_byte(deviceaddress, a+i)!=0) break;
+            i++;
+          }
+          while (i<len)
+          { short wc = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+            wc = -wc;
+            i+=2;
+
+            // data block
+            if (wc>0 && wc<=16)
+            { short adr = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+              Serial.println(toOct(wc)+':'+toOct(adr));
+              i+=2;
+              short cs = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+              i+=2;
+              for (int j=0; j<wc; j++)
+              { short data = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+                deposit(adr+j, data);
+                i+=2;
+              }
+            }
+            // constant block
+            else if (wc>16 && wc <= 32767)
+            { short adr = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+              Serial.println(toOct(wc)+' '+toOct(adr));
+              i+=2;
+              short cs = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+              i+=2;
+              short data = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+              i+=2;
+              for (int j=0; j<wc; j++)
+              { deposit(adr+j, data);
+              }
+            }
+            // start address block
+            else if (wc == -1)
+            { unsigned short adr = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+              startaddress = adr;
+              
+              i+=2;
+              i+=2;
+              break;
+            }
+          }
+          if (startaddress<32768) 
+          { Serial.println("start adress "+toOct(startaddress));
+            nextcmd = "run "+toOct(startaddress);
+          }
+        }
+        else if(filename!="LIST")
+          Serial.println("Tape "+filename+" not found");
+      }
+
       Serial.print(">");
       line = "";
     }
@@ -3202,6 +3370,16 @@ void gpio(unsigned int A)
 void loop() {
   unsigned long currentMillis = millis();
 
+#ifdef TEENSY
+  if (Serial2.available())
+  { byte b = Serial2.read();
+    //Serial.println(toHex2(b));
+    Serial.write(b&0x7f);
+    //Serial.write('\r');
+    return;
+  }
+#endif
+
   // wait and detect halt condition; special bits in HALT are interpreted as 'OS' instructions
   while (millis() - currentMillis < 100)
   { bool runLight = readLights()&1;
@@ -3338,8 +3516,11 @@ void loop() {
       else if (haltInstruction==GETC)
       { break; // handled in serial and keyboard code
       }
-      else
-      { break; // Normal halt: nova ready for input
+      else if (haltInstruction==HALT)
+      { Serial.println("HALT at address: "+toOct(haltAddress));
+        Serial.print(">");
+        SerialIO=false;
+        return; // Normal halt: nova ready for input
       }
     }
 
