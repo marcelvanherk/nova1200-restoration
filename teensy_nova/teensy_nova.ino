@@ -15,13 +15,13 @@ Marcel van Herk, 13 August 2020 - Basic menu when running otherwise monitor; ext
 Marcel van Herk, 14 August 2020 - Split menu and keyboard functions; more comments
                                 - 32 kW memory; help layout changes
                                 - Split basic session into raw session and example code
-								- Updated front panel image from FrontPanel 2.0 Copyright (c) 2007-2008, John Kichury
-								- Added cursor and color control on tft using \F \G \Ccol \Lrow \Bbgcolor and \Pcolor
-								- Note that the values e.g. line in \L can be surrounded by spaces
+                                - Updated front panel image from FrontPanel 2.0 Copyright (c) 2007-2008, John Kichury
+                                - Added cursor and color control on tft using \F \G \Ccol \Lrow \Bbgcolor and \Pcolor
+                                - Note that the values e.g. line in \L can be surrounded by spaces
 Marcel van Herk, 15 August 2020 - Added buffering of serial input into injectSerialText
-							    - This make copy and paste into terminal work with Nova at high speed
-							    - Added session .pong
-								- Added simple graphics terminal; use in BASIC:
+                                - This make copy and paste into terminal work with Nova at high speed
+                                - Added session .pong
+                                - Added simple graphics terminal; use in BASIC:
 
 PRINT "\G";ROW;COL;";" - set text cursor
 PRINT "\C";R;G;B";"    - set text color (RGB range 0..255)
@@ -40,29 +40,51 @@ PRINT "\T size [char];";- draw graphics character(s) (pass up to 8 numerical val
 
 Marcel van Herk, 16 August 2020 - Added proper session hierarchy and error handling
                                 - Added about information with reference to sources
-								- clearText also resets text colors and control codes
-								- Added /T option to draw character sprites
+                                - clearText also resets text colors and control codes
+                                - Added /T option to draw character sprites
 Marcel van Herk, 17 August 2020 - auto-->autostart; injects escape if session root is .BASICSESSION
                                 - Display special character names in keyboard; added prv key to reload previous 
                                 - Extended about; show about and then help on any button if power of.
-								- Made power-of image darker; use bit more color in help and about
+                                - Made power-of image darker; use bit more color in help and about
 Marcel van Herk, 29 August 2020 - Reset Nova lights on power ON; 
                                 - support TEENSY35 on small BB with tft overlapping pins 33-39, 32=led
 Marcel van Herk, 31 August 2020 - Renamed includes to .h to allow relative paths
                                 - Support Teensy3.0..4.1
-                                - Added optional PS2 keyboard on 4 pins (3v3,data,clock,gnd)
+                                - Added optional PS2 kb on 4 pins (3v3,data,clock,gnd)
+Marcel van Herk, 4 September 2020 - Added FEATHERWING_TFT_TOUCH mode
+Marcel van Herk, 5 September 2020 - Adjust help for touch mode; disable debounce for touch
+                                  - Added SD card to use as 'eeprom' if found
 
 ****************************************************/
 // on older IDE's this define must be made manually
 //#define ARDUINO_TEENSY35
 
+//#define FEATHERWING_TFT_TOUCH
+
 #include "SPI.h"
 #include "ILI9341_t3.h"
 #include "EEPROM.h"
 #include <PS2Keyboard.h>
+#include <Adafruit_STMPE610.h>
+#include <SD.h>
 
+#ifdef FEATHERWING_TFT_TOUCH
+#define SD_CS 8
+#define TOUCH_CS 3
+#define TFT_CS 4
+#define TFT_DC 10
+#else
+#define SD_CS BUILTIN_SDCARD
 #define TFT_CS 10
 #define TFT_DC 9
+#endif
+
+// set up variables using the SD utility library functions:
+Sd2Card card;
+SdVolume volume;
+SdFile root;
+File myFile;
+bool hasSD = false;
 
 // Use hardware SPI
 ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
@@ -74,6 +96,24 @@ const int DataPin = 24;
 const int IRQpin =  25;
 // tie pin 26 to ground
 PS2Keyboard ps2kb;
+#endif
+
+#ifdef FEATHERWING_TFT_TOUCH
+void pwrkb()
+{ pinMode(A1, OUTPUT);
+  digitalWrite(A1, 0);
+  pinMode(A0, OUTPUT);
+  digitalWrite(A0, 1);
+  delay(200);
+}
+const int IRQpin =  A3;
+const int DataPin = A2;
+// tie pin 26 to ground
+PS2Keyboard ps2kb;
+#endif
+
+#ifdef FEATHERWING_TFT_TOUCH
+Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
 #endif
 
 #define MEMSIZE 32768
@@ -115,58 +155,58 @@ String items[]=
 
 // function names of Nova keys and extensions for help strings
 String keyInfo[]={
-	"",     //0
-	"Deposit",
-	"AC0",
-	"Deposit",
-	"AC1",
-	"Deposit",
-	"AC2",
-	"Deposit",
-	"AC3",
-	"Reset",  //9
-	"Stop",
-	"Start",
-	"Continue",
-	"Deposit",
-	"Dp Next",
-	"Examine",
-	"Ex Next",
-	"Mem Step",
-	"Inst Step",
-	"Prog Load", //19
-	"Store", //20
-	"[Esc]", //21
-	"Keyboard", //22
-	"Speed", //23
-	"Commands", //24
-	"Cls", //25
-	"Help", //26
-	"", //27
-	"", //28
-	"", //29
-	"", //30
-	"100000", //31
-	"010000", //32
-	"001000", //33
-	"000100", //34
-	"000010", //35
-	"000001", //36
-	"", //37
-	"", //38
-	"", //39
-	"", //40
-	"Zero", //41
-	"Zero", //42
-	"Zero", //43
-	"Zero", //44
-	"Zero", //45
-	"Zero", //46
-	"", //47
-	"FUNC", //48
-	"ON-OFF"  //49
+        "",     //0
+        "Deposit",
+        "AC0",
+        "Deposit",
+        "AC1",
+        "Deposit",
+        "AC2",
+        "Deposit",
+        "AC3",
+        "Reset",  //9
+        "Stop",
+        "Start",
+        "Continue",
+        "Deposit",
+        "Dp Next",
+        "Examine",
+        "Ex Next",
+        "Mem Step",
+        "Inst Step",
+        "Prog Load", //19
+        "Store", //20
+        "[Esc]", //21
+        "Keyboard", //22
+        "Speed", //23
+        "Commands", //24
+        "Cls", //25
+        "Help", //26
+        "", //27
+        "", //28
+        "", //29
+        "", //30
+        "100000", //31
+        "010000", //32
+        "001000", //33
+        "000100", //34
+        "000010", //35
+        "000001", //36
+        "", //37
+        "", //38
+        "", //39
+        "", //40
+        "Zero", //41
+        "Zero", //42
+        "Zero", //43
+        "Zero", //44
+        "Zero", //45
+        "Zero", //46
+        "", //47
+        "FUNC", //48
+        "ON-OFF"  //49
 };
-	
+        
 String keyHelp(int button)
 { String s="";
   int k=keys[button+keyBank*numButtons];
@@ -181,7 +221,7 @@ bool isKeyActive(int key)
 { for (int i=0; i<numButtons; i++)
   { int k = keys[keyBank*numButtons+i];
     if ((k&255)==key) return true;
-	if (((k>>8)&255)==key) return true;
+        if (((k>>8)&255)==key) return true;
   }
   return false;
 }
@@ -196,6 +236,10 @@ int getButtonPress(bool raw)
 
   static unsigned int lastChange=0;
   static unsigned int autoRepeat=0;
+  
+#ifdef FEATHERWING_TFT_TOUCH
+  return getTouchPress(raw);
+#endif
 
   int numBanks = sizeof(keys)/(numButtons*sizeof(keys[0]));
   unsigned int repeatTime=100;
@@ -272,20 +316,20 @@ int getButtonPress(bool raw)
     if (currentButtons==0)
     { stat=0; // no button pressed
       genKey=true;
-	  kinfo=lastKey;
+          kinfo=lastKey;
     }
     else
     { stat=1; // button just pressed
       kinfo = kinfo & 255;
       autoRepeat=0x7fffffff;
-	  if (longpress)
-	  { lastKey=kinfo;
+          if (longpress)
+          { lastKey=kinfo;
         return 0;
-	  }
-	  else
-	  { genKey=true;
+          }
+          else
+          { genKey=true;
         lastKey=0;
-	  }
+          }
     }      
   }
 
@@ -324,6 +368,202 @@ int getButtonPress(bool raw)
 
   return 0;
 }
+
+#ifdef FEATHERWING_TFT_TOUCH
+// get key with debounce, autorepeat and long press as configured in key array
+// raw keys used for menu only
+int getTouchPress(bool raw)
+{ bool genKey=false;
+  static int stat=0;
+  static int previousButtons=0;
+  static int lastKey=0;
+
+  static unsigned int lastChange=0;
+  static unsigned int autoRepeat=0;
+
+  int numBanks = sizeof(keys)/(numButtons*sizeof(keys[0]));
+  unsigned int repeatTime=100;
+  
+  static bool conf=false;
+  if (!conf)
+  { conf=true;
+    lastChange = millis();
+    delay(10);
+    return 0;
+  }
+
+  uint16_t x=0, y=0;
+  uint8_t z=0;
+  static int currentButtons = 0;
+  if (touch.touched())
+  { unsigned short *data1 = (unsigned short *)malloc(320*2);
+    unsigned short *data2 = (unsigned short *)malloc(320*2);
+    unsigned short *data3 = (unsigned short *)malloc(320*2);
+    unsigned short *data4 = (unsigned short *)malloc(320*2);
+    //unsigned short *data5 = (unsigned short *)malloc(320*10*2);
+    //unsigned short *data6 = (unsigned short *)malloc(320*10*2);
+
+    tft.readRect(0, 120, 320, 1, data1);  
+    tft.readRect(80, 0, 1, 240, data2);  
+    tft.readRect(160, 0, 1, 240, data3);  
+    tft.readRect(240, 0, 1, 240, data4);  
+    //tft.readRect(0, 0, 320, 10, data5);  
+    //tft.readRect(0, 123, 320, 10, data6);  
+
+    tft.drawLine(0, 120, 319, 120, CL(255,255,255));
+    tft.drawLine(80, 0, 80, 239, CL(255,255,255));
+    tft.drawLine(160, 0, 160, 239, CL(255,255,255));
+    tft.drawLine(240, 0, 240, 239, CL(255,255,255));
+
+/*
+    int s=tft.getTextSize();
+    tft.setTextSize(1);
+    tft.setTextColor(CL(255,255,255));
+    tft.setCursor(5,0);
+    tft.print(keyHelp(0).substring(0, 12));
+    tft.setCursor(85,0);
+    tft.print(keyHelp(1).substring(0, 12));
+    tft.setCursor(165,0);
+    tft.print(keyHelp(4).substring(0, 12));
+    tft.setCursor(245,0);
+    tft.print(keyHelp(5).substring(0, 12));
+    tft.setCursor(5,123);
+    tft.print(keyHelp(2).substring(0, 12));
+    tft.setCursor(85,123);
+    tft.print(keyHelp(3).substring(0, 12));
+    tft.setCursor(165,123);
+    tft.print(keyHelp(6).substring(0, 12));
+    tft.setCursor(245,123);
+    tft.print(keyHelp(7).substring(0, 12));
+    tft.setTextColor(CL(192,192,64));
+    tft.setTextSize(s);
+*/
+
+    while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
+    if (x && y) 
+    { //Serial.println(String(x) +" "+String(y)+" "+String(z));
+      x = (x-200)/1800; if (x>1) x=1; if (x<0) x=0;
+      y = (y-200)/900; if (y>3) y=3; if (y<0) y=0;
+      x=(y+x*4);
+      switch(x)
+      { case 0: currentButtons=1; break;
+        case 1: currentButtons=2; break;
+        case 2: currentButtons=16; break;
+        case 3: currentButtons=32; break;
+        case 4: currentButtons=4; break;
+        case 5: currentButtons=8; break;
+        case 6: currentButtons=64; break;
+        case 7: currentButtons=128; break;
+      }
+    }
+    delay(7);
+    tft.writeRect(0, 120, 320, 1, data1);  
+    tft.writeRect(80, 0, 1, 240, data2);  
+    tft.writeRect(160, 0, 1, 240, data3);  
+    tft.writeRect(240, 0, 1, 240, data4);  
+    //tft.writeRect(0, 0, 320, 10, data5);  
+    //tft.writeRect(0, 123, 320, 10, data6);  
+
+    free(data1);
+    free(data2);
+    free(data3);
+    free(data4);
+    //free(data5);
+    //free(data6);
+  }
+  else
+  { while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
+    currentButtons=0;
+  }
+      
+  // nothing happened
+  if (stat==0 && currentButtons==previousButtons) 
+    return 0;
+
+  // button pressed or released; start debounce
+  if (stat<2 && currentButtons!=previousButtons) 
+  { lastChange=millis();
+    previousButtons = currentButtons;
+    stat=2; // debounce
+    //return 0;
+  }
+
+  // decode single key from bitflags
+  int ckey=-1;
+  int cb = currentButtons;
+  while(cb) 
+  { ckey++;
+    cb = cb>>1;
+  }
+
+  // lookup key in table
+  int kinfo = keys[numButtons*keyBank+max(ckey,0)];
+  if (raw) kinfo=ckey+1+AR;
+
+  int autorep = kinfo & AR;
+  int longpress = (kinfo>>8) & 255;
+  if (!autorep) repeatTime=20000;
+
+  // waiting for end debounce
+  if (stat==2 && currentButtons==previousButtons)// && (millis()-lastChange)>1) 
+  { lastChange=millis();
+    previousButtons=currentButtons;
+    if (currentButtons==0)
+    { stat=0; // no button pressed
+      genKey=true;
+          kinfo=lastKey;
+    }
+    else
+    { stat=1; // button just pressed
+      kinfo = kinfo & 255;
+      autoRepeat=0x7fffffff;
+          if (longpress)
+          { lastKey=kinfo;
+        return 0;
+          }
+          else
+          { genKey=true;
+        lastKey=0;
+          }
+    }      
+  }
+
+  // failed debounce
+  if (stat==2 && currentButtons!=previousButtons)// && millis()-lastChange>1) 
+  { lastChange=millis();
+    previousButtons=currentButtons;
+    if (currentButtons==0)
+      stat=0;
+    else
+      stat=1;
+    return 0;
+  }
+
+  // waiting for long press
+  if (stat==1 && millis()-lastChange>500 && millis()-autoRepeat>repeatTime && (autorep||longpress)) 
+  { genKey=true;
+    lastKey=0;
+    autoRepeat=millis();
+
+    if (longpress) kinfo = longpress;
+    else           kinfo = kinfo & 255;
+  }
+
+  // output key, special options for bank selection
+  if (genKey && kinfo)
+  { if (kinfo==48) 
+    { keyBank++;
+      if (keyBank>=numBanks) keyBank=0;
+      kinfo = 80+keyBank;
+    }
+    if (kinfo==25) 
+      keyBank=0;
+    return kinfo;
+  }
+
+  return 0;
+}
+#endif
 
 // visual representation of the Nova
 // keys and switches
@@ -367,15 +607,15 @@ void updateImage()
       free(data);
     }
     else
-	{ if (sw!=oldsw && sk==oldsk && keySel==oldks) // only draw switch area to avoid blinking
+        { if (sw!=oldsw && sk==oldsk && keySel==oldks) // only draw switch area to avoid blinking
         tft.writeRect(0, vshift+49, gimp_image.width, gimp_image.height-49, (uint16_t*)(gimp_image.pixel_data)+49*gimp_image.width);
-	  else
+          else
         tft.writeRect(0, vshift, gimp_image.width, gimp_image.height, (uint16_t*)(gimp_image.pixel_data));
-	}
+        }
 
     // draw toggle switches at rest
     for (int i=0; i<10; i++)
-	  if (isKeyActive(i*2+1) || isKeyActive(i*2+2) || pwroff)
+          if (isKeyActive(i*2+1) || isKeyActive(i*2+2) || pwroff)
       { tft.fillCircle(52+i*24, vshift+70, 3, pwroff?CL(32,32,32):CL(64,64,64));
       }
       else
@@ -398,7 +638,7 @@ void updateImage()
     if ((sk&3)==3) tft.drawRect(26, vshift+24, 15, 5, ILI9341_WHITE);
 
     // draw key selection hint
-	if (!pwroff)
+        if (!pwroff)
     { if (isKeyActive(31)) {tft.setCursor(52+225, vshift+40); tft.setTextColor(CL(255,0,0)); tft.print("Data"); }
       if (isKeyActive(1))  {tft.setCursor(30,     vshift+66); tft.setTextColor(CL(128,0,0)); tft.print("AC"); }
       if (isKeyActive(13)) {tft.setCursor(172,    vshift+66); tft.setTextColor(CL(128,0,0)); tft.print("DEP"); }
@@ -406,7 +646,7 @@ void updateImage()
       if (isKeyActive(9))  {tft.setCursor(117,    vshift+66); tft.setTextColor(CL(128,0,0)); tft.print("STOP"); }
       if (isKeyActive(18)) {tft.setCursor(212,    vshift+66); tft.setTextColor(CL(128,0,0)); tft.print("STEP"); }
       if (isKeyActive(19)) {tft.setCursor(278,    vshift+66); tft.setTextColor(CL(128,0,0)); tft.print("PL"); }
-	}
+        }
 
     oldsk=sk;
     oldsw=sw;
@@ -469,26 +709,41 @@ void showHelp() {
   tft.setTextColor(CL(192,192,64));
   tft.setTextSize(1);
   tft.setCursor(0,0);
+  tft.println("");
+#ifdef FEATHERWING_TFT_TOUCH
+  tft.println("                    Touch help");
+#else
   tft.println("                    Button help");
+#endif
   tft.setTextColor(CL(255,64,0));
   tft.println("FUNC: key functions             Press short / long");
-  tft.drawRect(124, 10, 57, 100, CL(32, 128, 32));
-  tft.drawRect(124+15, 10+84, 57-30, 16, CL(32, 128, 32));
+#ifdef FEATHERWING_TFT_TOUCH
+  int offs=3;
+  tft.drawRect(97, 35, 109, 74, CL(32, 128, 32));
+  tft.drawLine(97, 35+37, 97+108, 35+37, CL(32, 128, 32));
+  tft.drawLine(97+27, 35, 97+27, 35+73, CL(32, 128, 32));
+  tft.drawLine(97+54, 35, 97+54, 35+73, CL(32, 128, 32));
+  tft.drawLine(97+81, 35, 97+81, 35+73, CL(32, 128, 32));
+#else
+  int offs=0;
+  tft.drawRect(124, 18, 57, 100, CL(32, 128, 32));
+  tft.drawRect(124+15, 18+84, 57-30, 16, CL(32, 128, 32));
+#endif
   tft.println("");
   tft.println("");
   int l=keyHelp(1).length();
-  tft.println(makespc(16-l)+keyHelp(1)+"   o");
+  tft.println(makespc(16-l)+keyHelp(1)+makespc(offs)+"   o");
   l=keyHelp(0).length();
-  tft.println(makespc(16-l)+keyHelp(0)+" o");
+  tft.println(makespc(16-l)+keyHelp(0)+makespc(offs/2)+" o");
   tft.setTextColor(CL(192,192,64));
-  tft.println("                               o   "+keyHelp(4));
-  tft.println("                                 o "+keyHelp(5));
+  tft.println(makespc(31-offs)+"o   "+makespc(offs)+keyHelp(4));
+  tft.println(makespc(31-offs/2)+"  o "+makespc(offs/2)+keyHelp(5));
   l=keyHelp(3).length();
-  tft.println(makespc(16-l)+keyHelp(3)+"   o");
+  tft.println(makespc(16-l)+keyHelp(3)+makespc(offs)+"   o");
   l=keyHelp(2).length();
-  tft.println(makespc(16-l)+keyHelp(2)+" o");
-  tft.println("                               o   "+keyHelp(6));
-  tft.println("                                 o "+keyHelp(7));
+  tft.println(makespc(16-l)+keyHelp(2)+makespc(offs/2)+" o");
+  tft.println(makespc(31-offs)+"o   "+makespc(offs)+keyHelp(6));
+  tft.println(makespc(31-offs/2)+"  o "+makespc(offs/2)+keyHelp(7));
   tft.println("");
   tft.println("");
   l=items[keyBank].length();
@@ -508,14 +763,14 @@ int textLine=0;
 void restoreText(bool force)
 { for (int i=0; i<18; i++)
     for (int j=0; j<64; j++)
-	{ if (force || textBackup[i*64+j]!=textBuffer[i*64+j])
-      {	tft.setCursor(j*5,i*8);
+        { if (force || textBackup[i*64+j]!=textBuffer[i*64+j])
+      { tft.setCursor(j*5,i*8);
         tft.setTextColor(CL(128,128,96), CL(0,0,0));
-		if (textBuffer[i*64+j]==0) textBuffer[i*64+j]=' ';
-		tft.write(textBuffer[i*64+j]);
+                if (textBuffer[i*64+j]==0) textBuffer[i*64+j]=' ';
+                tft.write(textBuffer[i*64+j]);
         textBackup[i*64+j]=textBuffer[i*64+j];
-	  }
-	}
+          }
+        }
 }
 
 void clearText(bool force)
@@ -569,117 +824,117 @@ void Serialwrite(int a)
   if (inCursor && a>='0' && a<='9') // collect graphics terminal number
   { val=10*val+a-'0';
     hasnum=true;
-	return;
+        return;
   }
     
   if (inCursor) 
   { if (hasnum) // store graphics terminal number
-	{ vals[inCursor-1]=val;
+        { vals[inCursor-1]=val;
       inCursor++;
-	  if (inCursor>10) inCursor=0; // protect against array overflow
-	  hasnum=false;
-	  val=0;
-	}
+          if (inCursor>10) inCursor=0; // protect against array overflow
+          hasnum=false;
+          val=0;
+        }
     if (a==';') // execute graphics terminal command
-	{ int n=inCursor-1; inCursor=0;
+        { int n=inCursor-1; inCursor=0;
       switch(command)
-	  { case 'G':
+          { case 'G':
         case 'g': textCol=vals[0]%64; textLine=vals[1]%18; return;
-	    case 'C':
+            case 'C':
         case 'c': textColor=CL(vals[0],vals[1],vals[2]); return;
-	    case 'B':
+            case 'B':
         case 'b': textBgColor=CL(vals[0],vals[1],vals[2]); return;
 
-	    case 'm':
+            case 'm':
         case 'M': x=vals[0]; y=vals[1]; textCol=textLine=0; return; //avoid scrolling
-	    case 'l': 
+            case 'l': 
         case 'L': tft.drawLine(x, y, vals[0], vals[1], textColor); 
-		          x=vals[0]; y=vals[1]; textCol=textLine=0; return;
+                          x=vals[0]; y=vals[1]; textCol=textLine=0; return;
 
-	    case 'r': tft.drawRect(x, y, vals[0], vals[1], textColor); textCol=textLine=0; return;
+            case 'r': tft.drawRect(x, y, vals[0], vals[1], textColor); textCol=textLine=0; return;
         case 'R': tft.fillRect(x, y, vals[0], vals[1], textColor); textCol=textLine=0; return;
-	    case 'e': tft.drawCircle(x, y, vals[0], textColor); textCol=textLine=0; return;
+            case 'e': tft.drawCircle(x, y, vals[0], textColor); textCol=textLine=0; return;
         case 'E': tft.fillCircle(x, y, vals[0], textColor); textCol=textLine=0; return;
 
-	    case 't': 
+            case 't': 
         case 'T': int s=tft.getTextSize(); 
-		          tft.setTextSize(vals[0]);
-				  tft.setTextColor(textColor, textBgColor);
-				  tft.setCursor(x, y);
-				  for (int i=1; i<n; i++) tft.write(vals[i]); // not for control characters 
-		          tft.setTextSize(s); 
-				  return;
-	  }
-	}
-	return;
+                          tft.setTextSize(vals[0]);
+                                  tft.setTextColor(textColor, textBgColor);
+                                  tft.setCursor(x, y);
+                                  for (int i=1; i<n; i++) tft.write(vals[i]); // not for control characters 
+                          tft.setTextSize(s); 
+                                  return;
+          }
+        }
+        return;
   }
 
   if (a==10) 
   { textCol=0;
     textLine++;
-	if (textLine>=18) {scroll(); textLine=17;}
-	inString=false;
-	inControl=false;
-	inCursor=0;
+        if (textLine>=18) {scroll(); textLine=17;}
+        inString=false;
+        inControl=false;
+        inCursor=0;
   }
   else if (a==13) 
   { 
   }
   else if (a==12) 
   { clearText(false);
-	inString=false;
-	inControl=false;
-	inCursor=0;
+        inString=false;
+        inControl=false;
+        inCursor=0;
   }
   else
   { if (inControl)
-	{ inControl=false;
+        { inControl=false;
       if (a=='f') 
-	  { clearText(false);
+          { clearText(false);
         return;
-	  }
+          }
       if (a=='F') 
-	  { clearText(true);
+          { clearText(true);
         return;
-	  }
+          }
       if (a=='p' || a=='P') 
-	  { tft.drawPixel(x, y, textColor);
+          { tft.drawPixel(x, y, textColor);
         return;
-	  }
+          }
       if (a=='g'|| a=='G' || a=='b' || a=='B' || a=='C' || a=='C') 
-	  { inCursor=1;  // text commands
+          { inCursor=1;  // text commands
         command = a;
         return;
-	  }
+          }
       if (a=='m'|| a=='M' || a=='r' || a=='R' || a=='l' || a=='L' || a=='e' || a=='E' || a=='t' || a=='T') 
-	  { inCursor=1;  // graphics commands
+          { inCursor=1;  // graphics commands
         command = a;
         return;
-	  }
+          }
     }
 
     if (a=='"') // do not execute control commands while enclosed in ""
-	  inString=!inString;
+          inString=!inString;
 
     if (a=='\\' && !inString) // start of command
-	{ inControl=true; 
+        { inControl=true; 
       command=0;
-	  val=0;
-	  hasnum=false;
+          val=0;
+          hasnum=false;
       return;
-	}
+        }
 
     textCol++;
     if (textCol>=64)
-	{ textLine++;
+        { textLine++;
       textCol=0;
-	  if (textLine>=18) {scroll(); textLine=17;}
-	}
-	tft.setCursor(textCol*5,textLine*8);
+          if (textLine>=18) {scroll(); textLine=17;}
+        }
+        tft.setCursor(textCol*5,textLine*8);
     tft.setTextColor(textColor, textBgColor);
     tft.write(a);
-	textBuffer[textLine*64+textCol]=a;
-	textBackup[textLine*64+textCol]=a;
+        textBuffer[textLine*64+textCol]=a;
+        textBackup[textLine*64+textCol]=a;
   }
 }
 
@@ -1183,8 +1438,10 @@ String tapeloader(const unsigned char*p, int len, String name)
 #    define EEPROMWORDS 994 // for Teensy 3.0-3.2, has 2048 bytes
 #  endif
 #endif
+int eepromwords = EEPROMWORDS;
+// if SD card is found support 10000 words
 
-#define ADD_DIFF(a) { if (ndiff<EEPROMWORDS) diffs[ndiff]=(a); ndiff++; };
+#define ADD_DIFF(a) { if (ndiff<eepromwords) diffs[ndiff]=(a); ndiff++; };
 
 // print memory or difference p[]-memory  as C-array to be embedded in the code 
 // or store it in eeprom with given ID as parameter if non-0
@@ -1193,7 +1450,7 @@ void unload(const unsigned short *p, int eeprom, int base)
   int countsame=0;
   int block=0;
   int length=0;
-  unsigned short diffs[EEPROMWORDS];
+  unsigned short *diffs = (unsigned short *)malloc(eepromwords*2);
   int ndiff=0;
   int id = micros()&0xffff;
   if (eeprom) id=eeprom;
@@ -1206,62 +1463,87 @@ void unload(const unsigned short *p, int eeprom, int base)
     if (p) v = (p[i]-v)&0xffff;
 
     if (v==startval && i<MEMSIZE) 
-	  countsame++;
-	else 
-	{ if (countsame > 3 || i==MEMSIZE)
+          countsame++;
+        else 
+        { if (countsame > 3 || i==MEMSIZE)
       { if (length)
         { if (!eeprom) Serial.print(String(block) + "," + String(length) + ",");
-	      ADD_DIFF(block);
-	      ADD_DIFF(length);
+              ADD_DIFF(block);
+              ADD_DIFF(length);
           for (int j=0; j<length; j++) 
-	      { unsigned short v=examine(block+j);
+              { unsigned short v=examine(block+j);
             if (p) v = (p[block+j]-v)&0xffff;
             if (!eeprom) Serial.print(String(v)); 
-			ADD_DIFF(v);
-			if (!eeprom) Serial.print(","); 
-	      }
+                        ADD_DIFF(v);
+                        if (!eeprom) Serial.print(","); 
+              }
           if (!eeprom) Serial.println();
-		}
-	    if (!eeprom) Serial.println(String(block+length+32768) + "," + String(countsame) + "," + String(startval) + ",");
-	    ADD_DIFF(block+length+32768);
-		ADD_DIFF(countsame);
-		ADD_DIFF(startval);
-	    block=i;
-		length=0;
-	  }
-	  else
-	    length += countsame;
+                }
+            if (!eeprom) Serial.println(String(block+length+32768) + "," + String(countsame) + "," + String(startval) + ",");
+            ADD_DIFF(block+length+32768);
+                ADD_DIFF(countsame);
+                ADD_DIFF(startval);
+            block=i;
+                length=0;
+          }
+          else
+            length += countsame;
       startval=v;
       countsame=1;
-	}
+        }
 
     if (length>=12 || (i==MEMSIZE && length>0))
-	{ if (!eeprom) Serial.print(String(block) + "," + String(length) + ",");
-	  ADD_DIFF(block);
-	  ADD_DIFF(length);
+        { if (!eeprom) Serial.print(String(block) + "," + String(length) + ",");
+          ADD_DIFF(block);
+          ADD_DIFF(length);
       for (int j=0; j<length; j++) 
-	  { unsigned short v=examine(block+j);
+          { unsigned short v=examine(block+j);
         if (p) v = (p[block+j]-v)&0xffff;
         if (!eeprom) Serial.print(String(v)); 
-	    ADD_DIFF(v);
-		if (!eeprom) Serial.print(","); 
-	  }
+            ADD_DIFF(v);
+                if (!eeprom) Serial.print(","); 
+          }
       if (!eeprom) Serial.println();
-	  block=i;
-	  length=0;
-	  startval=v;
-	}
-	if (!eeprom) 
-	  while (!Serial.availableForWrite()) delay(10);
+          block=i;
+          length=0;
+          startval=v;
+        }
+        if (!eeprom) 
+          while (!Serial.availableForWrite()) delay(10);
   }
   
   Serial.println("Length (words): " + String(ndiff));
-  if (eeprom && ndiff>=EEPROMWORDS) 
+  if (eeprom && ndiff>=eepromwords) 
   { Serial.println("Session does not fit in eeprom; not stored");
     tft.setCursor(0,0);
     tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
-	tft.println("** Session does not fit in eeprom; not stored **");
-	delay(5000);
+        tft.println("** Session does not fit in eeprom; not stored **");
+        delay(5000);
+  }
+  else if (eeprom && hasSD)
+  { unsigned short s=ndiff;
+
+    myFile = SD.open("tnses1.bin", FILE_WRITE);
+    myFile.seek(0);
+    myFile.write(s>>8);
+    myFile.write(s&255);
+    for (int i=0; i<ndiff; i++)
+    { unsigned short s=diffs[i];
+      myFile.write(s>>8);
+      myFile.write(s&255);
+    }
+    myFile.close();
+
+    Serial.println("Used SD(of "+String(eepromwords*2)+"): " + String(ndiff*2));
+    tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(0,0);
+    tft.println("Used SD: " + String(ndiff*2));
+    delay(1000);
+    tft.setCursor(0,0);
+    tft.println("                             ");
+    tft.setTextSize(1);
+    restoreText(true);
   }
   else if (eeprom)
   { for (int i=0; i<ndiff; i++)
@@ -1272,17 +1554,19 @@ void unload(const unsigned short *p, int eeprom, int base)
     unsigned short s=ndiff;
     EEPROM.write(38, s>>8);
     EEPROM.write(39, s&255);
-    Serial.println("Used eeprom(of "+String(EEPROMWORDS*2)+"): " + String(ndiff*2));
-	tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
-	tft.setTextSize(2);
-	tft.setCursor(0,0);
+    Serial.println("Used eeprom(of "+String(eepromwords*2)+"): " + String(ndiff*2));
+    tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+    tft.setTextSize(2);
+    tft.setCursor(0,0);
     tft.println("Used eeprom: " + String(ndiff*2));
-	delay(1000);
-	tft.setCursor(0,0);
+    delay(1000);
+    tft.setCursor(0,0);
     tft.println("                             ");
-	tft.setTextSize(1);
-	restoreText(true);
+    tft.setTextSize(1);
+    restoreText(true);
   }
+  
+  free(diffs);
 }
 
 // Load session data or difference
@@ -1294,16 +1578,16 @@ int sessionloader(const unsigned short *p, int len, String name, int base)
    { Serial.print("*** Error session difference with wrong base ***");
      tft.setCursor(0,0);
      tft.print("*** Error session difference with wrong base ***");
-	 delay (5000);
-	 return -1;
+         delay (5000);
+         return -1;
    }
 
    if (len<=0)
    { Serial.print("*** Error loading unknown session ***");
      tft.setCursor(0,0);
      tft.print("*** Error loading unknown session ***");
-	 delay (5000);
-	 return -1;
+         delay (5000);
+         return -1;
    }
 
    while (i<len)
@@ -1356,6 +1640,16 @@ int getSessionLength(int id)
 { if (id==basicsession[0]) return sizeof(basicsession)/2;
   if (id==basiccode[0]) return sizeof(basiccode)/2;
   if (id==basicpong[0]) return sizeof(basicpong)/2;
+  if (hasSD)
+  { myFile = SD.open("tnses1.bin");
+    if (myFile)
+    { myFile.seek(0);
+      int lenf = (myFile.read()<<8)+myFile.read();
+      int idf = (myFile.read()<<8)+myFile.read();
+      myFile.close();
+      if (id==idf) return lenf;
+    }
+  }
   if (id==(EEPROM.read(56)<<8)+EEPROM.read(57)) return (EEPROM.read(38)<<8)+EEPROM.read(39);
   return 0;
 }
@@ -1365,19 +1659,51 @@ int getSessionBase(int id)
 { if (id==basicsession[0]) return basicsession[1];
   if (id==basiccode[0]) return basiccode[1];
   if (id==basicpong[0]) return basicpong[1];
+  if (hasSD)
+  { myFile = SD.open("tnses1.bin");
+    if (myFile)
+    { myFile.seek(0);
+      myFile.read();
+      myFile.read();
+      int idf = (myFile.read()<<8)+myFile.read();
+      int basef = (myFile.read()<<8)+myFile.read();
+      myFile.close();
+      if (id==idf) return basef;
+    }
+  }
   if (id==(EEPROM.read(56)<<8)+EEPROM.read(57)) return (EEPROM.read(58)<<8)+EEPROM.read(59);
   return 0;
 }
 
 // Get pointer to session data
 const unsigned short *getSessionAddress(int id)
-{ static unsigned short eepromcopy[EEPROMWORDS];
+{ static unsigned short *eepromcopy=NULL;
+  if (eepromcopy==NULL) 
+    eepromcopy = (unsigned short *)malloc(eepromwords*2);
   if (id==basicsession[0]) return basicsession;
   if (id==basiccode[0]) return basiccode;
   if (id==basicpong[0]) return basicpong;
+  if (hasSD)
+  { myFile = SD.open("tnses1.bin");
+    if (myFile)
+    { myFile.seek(0);
+      int lenf = (myFile.read()<<8)+myFile.read();
+      int idf = (myFile.read()<<8)+myFile.read();
+      int basef = (myFile.read()<<8)+myFile.read();
+      if (id==idf)
+      { eepromcopy[0]=idf;
+        eepromcopy[1]=basef;
+        for (int i=0; i<lenf; i++) 
+          eepromcopy[i+2] = (myFile.read()<<8)+myFile.read();
+        myFile.close();
+        return eepromcopy;
+      }
+      myFile.close();
+    }
+  }
   if (id==(EEPROM.read(56)<<8)+EEPROM.read(57))
   { for (int i=0; i<EEPROMWORDS; i++) 
-	  eepromcopy[i] = (EEPROM.read(56+i*2)<<8)+EEPROM.read(57+i*2);
+      eepromcopy[i] = (EEPROM.read(56+i*2)<<8)+EEPROM.read(57+i*2);
     return eepromcopy;
   }
   return NULL;
@@ -1390,6 +1716,17 @@ int getSessionID(String name)
   if (name==".BASICSAMPLE") return basiccode[0];
   if (name==".PONG") return basicpong[0];
   if (name==".BASICPONG") return basicpong[0];
+  if (hasSD && name==".SD")
+  { myFile = SD.open("tnses1.bin");
+    if (myFile)
+    { myFile.seek(0);
+      myFile.read();
+      myFile.read();
+      int idf = (myFile.read()<<8)+myFile.read();
+      myFile.close();
+      return idf;
+    }
+  }
   if (name==".EEPROM") return (EEPROM.read(56)<<8)+EEPROM.read(57);
   if (name.toInt()) return name.toInt();
   return -1;
@@ -1400,7 +1737,18 @@ String getSessionName(int id)
 { if (id==basicsession[0] || id==-1) return ".BASICSESSION";
   if (id==basiccode[0]    || id==-2) return ".BASICSAMPLE";
   if (id==basicpong[0]    || id==-3) return ".BASICPONG";
-  if (id==(EEPROM.read(56)<<8)+EEPROM.read(57) || id==-4) return ".EEPROM";
+  if (hasSD)
+  { myFile = SD.open("tnses1.bin");
+    if (myFile)
+    { myFile.seek(0);
+      myFile.read();
+      myFile.read();
+      int idf = (myFile.read()<<8)+myFile.read();
+      myFile.close();
+      if (id==idf || id==-4) return ".SD";
+    }
+  }
+  if (id==(EEPROM.read(56)<<8)+EEPROM.read(57) || id==-5) return ".EEPROM";
   return "";
 }
 
@@ -1410,36 +1758,36 @@ int restoreSession(String name)
   ids[0] = getSessionID(name); // last level
 
   if (ids[0]<=0)
-  { Serial.println("** No session found **");	  
+  { Serial.println("** No session found **");     
     tft.println("** No session found **");
-	return 0;
+    return 0;
   }
 
   for (int i=0; i<9; i++) // look up base levels
   { ids[i+1] = getSessionBase(ids[i]);
   }
-  	
+        
   memset(NovaMem, 0, MEMSIZE*2);
 
   int id = 0; // load from root to last level
   rootID = 0;
   for (int i=9; i>=0; i--)
   { if (ids[i])
-	  { id=sessionloader(getSessionAddress(ids[i]), 
-                    getSessionLength(ids[i]), 
-					getSessionName(ids[i]), 
-					getSessionBase(ids[i]));
-		if (getSessionName(id)!=".EEPROM")
-          sessionID = id;
-		if (rootID==0)
-          rootID = id;
-	  }
+    { id=sessionloader(getSessionAddress(ids[i]), 
+                       getSessionLength(ids[i]), 
+                       getSessionName(ids[i]), 
+                       getSessionBase(ids[i]));
+      if (getSessionName(id)!=".EEPROM" && getSessionName(id)!=".SD")
+        sessionID = id;
+      if (rootID==0)
+        rootID = id;
+    }
   }
 
   if (id==0)
-  { Serial.println("** No session found **");	  
+  { Serial.println("** No session found **");     
     tft.println("** No session found **");
-	delay(5000);
+    delay(5000);
   }
 
   return id;
@@ -1450,7 +1798,7 @@ void unloadDiffToEEPROM()
 { if (sessionID==0) 
   { tft.setCursor(0,0);
     tft.println("** no session loaded **");
-	delay(5000);
+        delay(5000);
     return;
   }
   unsigned short *q=(unsigned short *)malloc(MEMSIZE*2);
@@ -1465,6 +1813,10 @@ void unloadDiffToEEPROM()
 void unloadDiffCode(String name)
 { if (name==".EEPROM") 
   { Serial.println("** cannot use EEPROM as base **");
+    return;
+  }
+  if (name==".SD") 
+  { Serial.println("** cannot use SD as base **");
     return;
   }
   unsigned short *q=(unsigned short *)malloc(MEMSIZE*2);
@@ -1488,9 +1840,13 @@ void storeSession(void)
 int menu(String info, String menuString, int ch, bool inject)
 { tft.fillScreen(ILI9341_RED);
   tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
-  tft.setCursor(230, 200);
+  int offs=0;
+#ifdef FEATHERWING_TFT_TOUCH
+  offs=10;
+#endif  
+  tft.setCursor(230, 200+offs);
   tft.print("X X");
-  tft.setCursor(230, 220);
+  tft.setCursor(230, 220+offs);
   tft.print("L R");
   tft.setCursor(270, 210);
   tft.print("U cancel");
@@ -1505,44 +1861,45 @@ int menu(String info, String menuString, int ch, bool inject)
   while(true)
   { int N=0;
     int col=30;
-	String text="";
+    String text="";
     String s = menuString;
     while((pos=s.indexOf("\n"))>=0)
     { tft.setCursor(col, 30+20*(N%10));
       if (N==choice) 
-	  { tft.print(">");
-	    text = s.substring(0, pos);
-	  }
-	  else
-		tft.print(" ");
+      { tft.print(">");
+        text = s.substring(0, pos);
+      }
+      else
+        tft.print(" ");
       tft.print(s.substring(0, pos));
-	  s.remove(0, pos+1);
-	  N++;
-	  if (N%10==0) col=col+30;
-	}
+      s.remove(0, pos+1);
+      N++;
+      if (N%10==0) col=col+30;
+    }
 
-	int k=getButtonPress(true);
+    int k=getButtonPress(true);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
     if (k==8) 
     { tft.fillScreen(ILI9341_BLACK);
       tft.setTextSize(1);
       if (helpScreen>=0) showHelp(); else restoreText(true);
       keySel=-99;
       if (inject && text.length()==1) injectSerial(text);
-	  if (inject && text.length()>1) injectSerial(text + "\r");
+      if (inject && text.length()>1) injectSerial(text + "\r");
       return choice;
-	}
+    }
     if (k==6) 
-	{ tft.fillScreen(ILI9341_BLACK);
+    { tft.fillScreen(ILI9341_BLACK);
       tft.setTextSize(1);
       if (helpScreen>=0) showHelp(); else restoreText(true);
       keySel=-99;
-	  return -1;
-	}
-	if (k==5) choice=(choice+10*N-1) % N;
-	if (k==7) choice=(choice+10*N+1) % N;
-	if (k==3) choice=(choice+10*N-10) % N;
-	if (k==4) choice=(choice+10*N+10) % N;
-	delay(10);
+      return -1;
+    }
+    if (k==5) choice=(choice+10*N-1) % N;
+    if (k==7) choice=(choice+10*N+1) % N;
+    if (k==3) choice=(choice+10*N-10) % N;
+    if (k==4) choice=(choice+10*N+10) % N;
+    delay(10);
   }
   return 0;
 }
@@ -1554,9 +1911,13 @@ int keyboard(String info, String menuString, int ch)
 
   tft.fillScreen(ILI9341_RED);
   tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
-  tft.setCursor(230, 200);
+  int offs=0;
+#ifdef FEATHERWING_TFT_TOUCH
+  offs=10;
+#endif  
+  tft.setCursor(230, 200+offs);
   tft.print("- +");
-  tft.setCursor(230, 220);
+  tft.setCursor(230, 220+offs);
   tft.print("L R");
   tft.setCursor(270, 210);
   tft.print("U cancel");
@@ -1570,75 +1931,77 @@ int keyboard(String info, String menuString, int ch)
   while(true)
   { int N=0;
     int col=30;
-	String text="";
+    String text="";
     String s = menuString;
     while(s.length()>0)
     { tft.setCursor(30*floor(N%10), col);
       if (N==choice) 
-	  { tft.print(">");
-	    text = s.substring(0, 1);
-	  }
-	  else
-		tft.print(" ");
-	  byte b=s.charAt(0);
-	  if (b<' ')
-	  { tft.setTextSize(1);
+      { tft.print(">");
+        text = s.substring(0, 1);
+      }
+      else
+        tft.print(" ");
+      byte b=s.charAt(0);
+      if (b<' ')
+      { tft.setTextSize(1);
         switch(b)
-		{ case 0x11: tft.print("Prv"); break;
+        { case 0x11: tft.print("Prv"); break;
           case 0x1: tft.print("C-A"); break;
           case 0x1b: tft.print("Esc"); break;
           case 0x0d: tft.print("CR"); break;
           default: tft.print("\\"+String(b,HEX));
-		}
-		tft.setTextSize(2);
-	  }
-	  else
+        }
+        tft.setTextSize(2);
+      }
+      else
         tft.print(s.charAt(0));
-	  s.remove(0, 1);
-	  N++;
-	  if (N%10==0) col=col+20;
+      s.remove(0, 1);
+      N++;
+     if (N%10==0) col=col+20;
     }
-	tft.setCursor(0, 180);
-	for (unsigned int i=0; i<40; i++)
-	{ if (i>=t.length()) tft.print(" ");
+    tft.setCursor(0, 180);
+    for (unsigned int i=0; i<40; i++)
+    { if (i>=t.length()) tft.print(" ");
       else if(t[i]==' ') tft.print("_");
       else tft.print(t[i]);
-	}
+    }
 
-	int k=getButtonPress(true);
+
+    int k=getButtonPress(true);
+    tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
     if (k==2) 
-	  t = t + text;
+      t = t + text;
     if (k==1) 
-	  t = t.remove(t.length()-1);
+      t = t.remove(t.length()-1);
     if (k==8) 
     { if (text=="\x11") 
-	    t = previous;
-	  else
+        t = previous;
+      else
       { tft.fillScreen(ILI9341_BLACK);
         tft.setTextSize(1);
         if (helpScreen>=0) showHelp(); else restoreText(true);
         keySel=-99;
-	    if (t=="") 
-	    { injectSerial(text);
+        if (t=="") 
+        { injectSerial(text);
           return 0;
-	    }
+        }
         injectSerial(t+"\r");
-		previous=t;
+        previous=t;
         return 0;
-	  }
-	}
+      }
+    }
     if (k==6) 
-	{ tft.fillScreen(ILI9341_BLACK);
+    { tft.fillScreen(ILI9341_BLACK);
       tft.setTextSize(1);
       if (helpScreen>=0) showHelp(); else restoreText(true);
       keySel=-99;
-	  return -1;
-	}
-	if (k==5) choice=max(choice-10, 0);
-	if (k==7) choice=min(choice+10, N-1);
-	if (k==3) choice=max(choice-1, 0);
-	if (k==4) choice=min(choice+1, N-1);
-	delay(10);
+      return -1;
+    }
+    if (k==5) choice=max(choice-10, 0);
+    if (k==7) choice=min(choice+10, N-1);
+    if (k==3) choice=max(choice-1, 0);
+    if (k==4) choice=min(choice+1, N-1);
+    delay(10);
   }
   return 0;
 }
@@ -1655,9 +2018,9 @@ void processButton(int but)
   // buttons 3-8 toggle help if power off
   if (but && novaKey<2)
   { if (novaKey<2 && but<48 && but!=26 && but!=49)
-	  { if (helpScreen<0) about();
+          { if (helpScreen<0) about();
         but=26;
-	  }		
+          }             
   }
 
   // animate key toggle
@@ -1693,14 +2056,16 @@ void processButton(int but)
   // program load restores eeprom session and its dependencies and starts it
   if (but==19) 
   { novaButton=18; 
-    int id=restoreSession(".EEPROM"); 
-	if (id==0) 
-	{ return;
-	}
-	novaAddress=2; novaSwitches=2;  
-	startNova(2);
+    int id;
+    if (hasSD) id=restoreSession(".SD"); 
+    else id=restoreSession(".EEPROM"); 
+    if (id==0) 
+    { return;
+    }
+    novaAddress=2; novaSwitches=2;  
+    startNova(2);
     SerialIO=true;
-	clearText(true);
+    clearText(true);
     injectSerial("\x1b");
   }
 
@@ -1718,7 +2083,7 @@ void processButton(int but)
   if (but==23) { if (SIMINTERVAL>9000) SIMINTERVAL=1; //set speed
                  else if (SIMINTERVAL<2) SIMINTERVAL=31; 
                  else if (SIMINTERVAL<100) SIMINTERVAL=971;
-				 else SIMINTERVAL=39731;
+                                 else SIMINTERVAL=39731;
                }
   if (but==24) 
   { Serialwrite(-1); 
@@ -1752,70 +2117,72 @@ void processButton(int but)
                  tft.fillScreen(ILI9341_BLACK);
                  keySel=-99; // forces repaint
                  helpScreen=-1;
-				 clearText(true);
-				 keyBank=2;
+                 clearText(true);
+                 keyBank=2;
                }
-			   
-  if (but==26) { keySel=-99; // help
+
+               if (but==26) 
+               { keySel=-99; // help
                  if (helpScreen<0) 
-				 { helpScreen=0; showHelp(); 
-			     }
-			     else
-				 { helpScreen=-1; restoreText(true);
-				 }
+                 { helpScreen=0; showHelp();  
+                 }
+                 else
+                 { helpScreen=-1; restoreText(true);
+                 }
                } 
 
   if (but==49) { novaKey = novaKey!=2?2:1; // power 
                  novaRunning = false;
-				 keyBank=2;
-				 reset_all(0);
+                 keyBank=2;
+                 reset_all(0);
                  
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
-				 { analogWrite(14, 100); 
-			       digitalWrite(15, 0);
-				 }
-				 else
-				 { analogWrite(14, 200); 
-			       digitalWrite(15, 1);
-				 }
-			 
+                 { analogWrite(14, 100); 
+                   digitalWrite(15, 0);
+                 }
+                 else
+                 { analogWrite(14, 200); 
+                   digitalWrite(15, 1);
+                 }
+
                  // analogWrite(16-novaKey, 20); analogWrite(13+novaKey, 0);
                  if (novaKey==2) 
                  { EEPROM.get(0, novaSwitches);
-			       restoreSession(".EEPROM");
+                   if (hasSD) restoreSession(".SD");
+                   else restoreSession(".EEPROM");
                  };
                  if (novaKey==1) 
                  { EEPROM.put(0, novaSwitches); 
-			       storeSession();
+                   storeSession();
                    novaSwitches=0; 
                  };
      
-				 novaLights=0;
-				 novaAddress=0;
-				 novaCarry=0;
-				 novaData=examine(0);
+                 novaLights=0;
+                 novaAddress=0;
+                 novaCarry=0;
+                 novaData=examine(0);
 
                  delay(300); 
 
                  // Dim green light when ON
                  if (novaKey==2) 
-				   analogWrite(14, 3); 
-				 else 
-				 { analogWrite(14, 0);
+                   analogWrite(14, 3); 
+                 else 
+                 { analogWrite(14, 0);
                    digitalWrite(15, 0);
-				 }
+                 }
 
                  tft.setCursor(0, 0);
                  tft.fillScreen(ILI9341_BLACK);
                  keySel=-99; // forces repaint
-				 clearText(true);
+                 clearText(true);
                  if (helpScreen>=0) 
-				   showHelp();
-			     else if (novaKey>1)
-				 { tempHelp=millis();
                    showHelp();
-				 }
+                 else if (novaKey>1)
+                 { tempHelp=millis();
+                   showHelp();
+                 }
                }
 }
 
@@ -1896,7 +2263,7 @@ byte Serialread()
   if (injectSerialText.length())
   { byte b = injectSerialText.charAt(0);
     injectSerialText.remove(0, 1);
-	return b;
+        return b;
   }
   
   return '$';
@@ -1912,34 +2279,34 @@ void injectSerial(String s)
 
 void about(void)
 {       tft.fillScreen(ILI9341_BLACK);
-		tft.setTextColor(ILI9341_WHITE);
+                tft.setTextColor(ILI9341_WHITE);
         tft.setCursor(0,0);
-		tft.println();
-		tft.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
-		tft.println();
+                tft.println();
+                tft.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
+                tft.println();
         tft.setTextColor(CL(192,192,64));
-		tft.println("Data General Nova - 1st 16 bit minicomputer in 1969");
-		tft.println("This circuit simulates a 1970 DG Nova 1200 machine,");
-		tft.println("equipped with 1 serial board and 4 8 KW core boards.");
-		tft.println("It runs the original 1970 DG BASIC software. You");
-		tft.println("can load and modify different 'sessions' to demo.");
-		tft.println();
-		tft.println("Note: the graphics terminal is an anachronism ;->>>");
-		tft.println();
-		tft.setTextColor(ILI9341_WHITE);
+                tft.println("Data General Nova - 1st 16 bit minicomputer in 1969");
+                tft.println("This circuit simulates a 1970 DG Nova 1200 machine,");
+                tft.println("equipped with 1 serial board and 4 8 KW core boards.");
+                tft.println("It runs the original 1970 DG BASIC software. You");
+                tft.println("can load and modify different 'sessions' to demo.");
+                tft.println();
+                tft.println("Note: the graphics terminal is an anachronism ;->>>");
+                tft.println();
+                tft.setTextColor(ILI9341_WHITE);
         tft.println("Contains parts of simhv3-9");
-		tft.println("Copyright (c) 1993-2008, Robert M. Supnik");
+                tft.println("Copyright (c) 1993-2008, Robert M. Supnik");
         tft.println();
         tft.println("Contains image from FrontPanel 2.0");
-		tft.println("Copyright (c) 2007-2008, John Kichury");
+                tft.println("Copyright (c) 2007-2008, John Kichury");
         tft.println();
         tft.setTextColor(CL(192,192,64));
-		tft.println("** Press button or key to return **");
-		Serial.println("** Press button or key to continue **");
-		keySel=-99;
-	    updateImage();
-		while(!getButtonPress(true) && !Serial.available());
-		restoreText(true);
+                tft.println("** Press button or key to return **");
+                Serial.println("** Press button or key to continue **");
+                keySel=-99;
+            updateImage();
+                while(!getButtonPress(true) && !Serial.available());
+                restoreText(true);
 }
 
 // process Serial data to pass to Nova or for monitor
@@ -1965,9 +2332,9 @@ void processSerial(int count)
     }
     else
     { if (DEV_IS_DONE(INT_TTI)) 
-	  { if (av) injectSerial(b); // avoid it getting lost
+          { if (av) injectSerial(b); // avoid it getting lost
         return;
-	  }
+          }
       
       //if (DEV_IS_BUSY(INT_TTI))
       { ttibuf= b;
@@ -2060,12 +2427,12 @@ void processSerial(int count)
 
       // stop Nova when running
       pc=NovaPC&0x7fff;
-	  
-	  if (line.startsWith("autostart"))
-	  { line = nextcmd;
+          
+          if (line.startsWith("autostart"))
+          { line = nextcmd;
         if(getSessionName(rootID)==".BASICSESSION")
-		  injectSerial("\x1b");
-	  }
+                  injectSerial("\x1b");
+          }
 
       // show help text
       if (line.startsWith("help"))
@@ -2286,26 +2653,26 @@ void processSerial(int count)
       }
 
       else if (line.startsWith("version")) {
-		Serial.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
-		Serial.println();
-		Serial.println("Data General Nova - 1st 16 bit minicomputer in 1969");
-		Serial.println("This circuit simulates a 1970 DG Nova 1200 machine,");
-		Serial.println("equipped with 1 serial board and 4 8 KW core boards.");
-		Serial.println("It runs the original 1970 DG BASIC software. You");
-		Serial.println("can load and modify different 'sessions' to demo.");
+                Serial.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
+                Serial.println();
+                Serial.println("Data General Nova - 1st 16 bit minicomputer in 1969");
+                Serial.println("This circuit simulates a 1970 DG Nova 1200 machine,");
+                Serial.println("equipped with 1 serial board and 4 8 KW core boards.");
+                Serial.println("It runs the original 1970 DG BASIC software. You");
+                Serial.println("can load and modify different 'sessions' to demo.");
         Serial.println();
-		Serial.println("Note: the graphics terminal is an anachronism ;->>>");
+                Serial.println("Note: the graphics terminal is an anachronism ;->>>");
         Serial.println();
         Serial.println("Contains parts of simhv3-9");
-		Serial.println("Copyright (c) 1993-2008, Robert M. Supnik");
+                Serial.println("Copyright (c) 1993-2008, Robert M. Supnik");
         Serial.println();
         Serial.println("Contains image from FrontPanel 2.0");
-		Serial.println("Copyright (c) 2007-2008, John Kichury");
+                Serial.println("Copyright (c) 2007-2008, John Kichury");
         nextcmd = "";
       }
 
       else if (line.startsWith("about")) {
-		about();
+                about();
         nextcmd = "";
       }
 
@@ -2346,7 +2713,9 @@ void processSerial(int count)
 
       // restore memory from eeprom
       else if (line.startsWith("restore"))
-        restoreSession(".EEPROM");
+          { if (hasSD) restoreSession(".SD");
+            else restoreSession(".EEPROM");
+          }
 
       // store memory to eeprom
       else if (line.startsWith("store"))
@@ -2608,54 +2977,54 @@ void processSerial(int count)
           Serial.println("Tape "+filename+" not found");
       }
 
-	  else if (line.startsWith("unloaddiff "))
-	  { int pos1=11;
+          else if (line.startsWith("unloaddiff "))
+          { int pos1=11;
         String filename = line.substring(pos1, 99).toUpperCase();
         unloadDiffCode(filename);
-	  }
+          }
 
-	  else if (line.startsWith("unload"))
-	  { unload((unsigned short *) NULL, 0, 0);
-	  }
+          else if (line.startsWith("unload"))
+          { unload((unsigned short *) NULL, 0, 0);
+          }
 
-	  else if (line.startsWith("cleareepromsession")) // undocumented
-	  { EEPROM.write(38, 0);
+          else if (line.startsWith("cleareepromsession")) // undocumented
+          { EEPROM.write(38, 0);
         EEPROM.write(39, 0);
         EEPROM.write(56, 0);
         EEPROM.write(57, 0);
         EEPROM.write(58, 0);
         EEPROM.write(59, 0);
-	    Serial.println("Erased EEPROM session; will not load anymore");
-	  }
+            Serial.println("Erased EEPROM session; will not load anymore");
+          }
 
       else if (line.startsWith("session "))
       { int pos1 = 8;
         String filename = line.substring(pos1, 99).toUpperCase();
-		
+                
         if (filename=="LIST")
         { for (int i=1; i<100; i++)
-		  { String name=getSessionName(-i);
-	        int len= getSessionLength(getSessionID(name));
-	        if (name!="" && len>0)
-	          Serial.println(name+" ; length "+String(len)+
-		                     "; id: "+String(getSessionID(name))+
-		                     "; based on: "+getSessionName(getSessionBase(getSessionID(name))));
-		  }
+                  { String name=getSessionName(-i);
+                int len= getSessionLength(getSessionID(name));
+                if (name!="" && len>0)
+                  Serial.println(name+" ; length "+String(len)+
+                                     "; id: "+String(getSessionID(name))+
+                                     "; based on: "+getSessionName(getSessionBase(getSessionID(name))));
+                  }
         }
-		else
-		{ int id=getSessionID(filename);
-	      if (id>0) restoreSession(filename);
-		  else Serial.println("Session "+filename+" not found");
-		  nextcmd = "run 2";
-		}
+                else
+                { int id=getSessionID(filename);
+              if (id>0) restoreSession(filename);
+                  else Serial.println("Session "+filename+" not found");
+                  nextcmd = "run 2";
+                }
       }
 
       else if (line.startsWith("speed "))
       { int pos1 = 6;
         unsigned short a = readOct(line, pos1);
-		SIMINTERVAL=a;
-		nextcmd="";
-	  }	  
+                SIMINTERVAL=a;
+                nextcmd="";
+          }       
 
       else if (line.length()>0)
         Serial.println("Unknown or mistyped command ignored");
@@ -2672,19 +3041,45 @@ void setup() {
 // all other pins are wired to the orginals, so they are set to input for safety
 
 #if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
-    					// tft 9 wired to MISO (pin 12)
+                                        // tft 9 wired to MISO (pin 12)
   pinMode(32, OUTPUT);
   digitalWrite(32, 1);  // tft 8 through 470 ohm resistor (LED)
-  pinMode(33, INPUT);  	// tft 7 wired to SCK (pin 13)
-  pinMode(34, INPUT);  	// tft 6 wired to MOSI (pin 12)
+  pinMode(33, INPUT);   // tft 7 wired to SCK (pin 13)
+  pinMode(34, INPUT);   // tft 6 wired to MOSI (pin 12)
   pinMode(35, INPUT);   // tft 5 wired to DC (pin 9)
-  pinMode(36, OUTPUT); 	// 
-  digitalWrite(36, 1); 	// tft 4 (RESET)
-  pinMode(37, INPUT); 	// tft 3 wired to CS (pin 10)
-  pinMode(38, INPUT);	// tft 2 wired to GND
-  pinMode(39, INPUT);	// tft 1 wired to VCC
+  pinMode(36, OUTPUT);  // 
+  digitalWrite(36, 1);  // tft 4 (RESET)
+  pinMode(37, INPUT);   // tft 3 wired to CS (pin 10)
+  pinMode(38, INPUT);   // tft 2 wired to GND
+  pinMode(39, INPUT);   // tft 1 wired to VCC
   delay(100);
-#endif 
+#endif
+
+#ifdef FEATHERWING_TFT_TOUCH
+  pwrkb();
+  if (!touch.begin())
+    Serial.println("No touch screen found");
+#endif
+
+  if (!card.init(SPI_HALF_SPEED, SD_CS)) 
+  { Serial.println("No SD card found");
+  }
+  else
+  { if (!volume.init(card)) 
+    { Serial.println("No filesystem on SD card found");
+    }
+    else
+    { //root.openRoot(volume);
+      //root.ls(LS_R | LS_DATE | LS_SIZE);
+      hasSD = true;
+      Serial.println("Using file tnses1.bin on SD card for session info");
+      SD.begin(SD_CS);
+      myFile = SD.open("tnses1.bin");
+      if (myFile) Serial.println("File size on SD card: "+String(myFile.size()));
+      myFile.close();
+      eepromwords = 10000; // SD card session size limited by RAM for buffers only
+    }
+  }
 
 // Note: you can now set the SPI speed to any value
 // the default value is 30Mhz, but most ILI9341 displays
@@ -2704,9 +3099,10 @@ void setup() {
   updateImage();
   tft.setCursor(0,0);
   
-#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
+#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41) || defined(FEATHERWING_TFT_TOUCH)
   ps2kb.begin(DataPin, IRQpin);
 #endif
+   
 }
 
 int runtime=0;
@@ -2719,9 +3115,9 @@ void loop(void) {
 
   // update MIPS when changing speed
   if (!novaRunning || prevSIMINTERVAL!=SIMINTERVAL || runtime>10000000)
-  {	runtime=0;
+  {     runtime=0;
     instructions=0;
-	prevSIMINTERVAL=SIMINTERVAL;
+        prevSIMINTERVAL=SIMINTERVAL;
   }
 
   // Injected or true serial data ?
@@ -2743,14 +3139,14 @@ void loop(void) {
     showHelp();
   }
   
-#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
+#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41) || defined(FEATHERWING_TFT_TOUCH)
   if(ps2kb.available())
   { char c = ps2kb.read();
     String s=""; s.concat(c);
     injectSerial(s);
   }
 #endif
-  
+
   // Erase temporary help screen
   if (tempHelp && millis()-tempHelp>(novaRunning?1000:5000))
   { restoreText(true);
@@ -2765,27 +3161,27 @@ void loop(void) {
 
   // something to do -> update screen
   if (a || novaRunning || count) 
-	updateImage();
+        updateImage();
 
   // for MIPS calculation
   if(novaRunning)
-	runtime += micros()-t;
+        runtime += micros()-t;
 
   // update MIPS display (note screen refresh and serial output is counted in time)
   if (runtime && instructions>100 && novaKey>1)
   { tft.setTextColor(CL(255,255,0), CL(0,0,0));
     tft.setCursor(276, 178);
     if (novaRunning) tft.print(String((float)instructions/runtime)+" ");
-	else tft.print("     ");
+        else tft.print("     ");
   }
   
   // show disassembled code as well
   if (helpScreen>=0 && novaKey>1)
   { tft.setTextColor(CL(128,255,0), CL(40,75,125));
     tft.setCursor(100, 229);
-	int s=novaData;
-	String d=printDisas(examine(novaAddress), OCT);
+        int s=novaData;
+        String d=printDisas(examine(novaAddress), OCT);
     tft.print(toOct(novaAddress)+" "+d+makespc(20-d.length()));
-	novaData=s;
+        novaData=s;
   }
 }
