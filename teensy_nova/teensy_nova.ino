@@ -54,17 +54,19 @@ Marcel van Herk, 31 August 2020 - Renamed includes to .h to allow relative paths
 Marcel van Herk, 4 September 2020 - Added FEATHERWING_TFT_TOUCH mode
 Marcel van Herk, 5 September 2020 - Adjust help for touch mode; disable debounce for touch
                                   - Added SD card to use as 'eeprom' if found
+Marcel van Herk, 6 September 2020 - FEATHERWING Teensy4 kb changed pins and added change note
+                                  - Added PS2_F1 ..PS2_F4
 
 ****************************************************/
 // on older IDE's this define must be made manually
 //#define ARDUINO_TEENSY35
 
-//#define FEATHERWING_TFT_TOUCH
+#define FEATHERWING_TFT_TOUCH
 
 #include "SPI.h"
 #include "ILI9341_t3.h"
 #include "EEPROM.h"
-#include <PS2Keyboard.h>
+#include "PS2Keyboard.h"
 #include <Adafruit_STMPE610.h>
 #include <SD.h>
 
@@ -89,27 +91,26 @@ bool hasSD = false;
 // Use hardware SPI
 ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
 
+PS2Keyboard ps2kb;
+
 #if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
 // If PS2 keyboard runs on 3.3 volt
 // 3.3 volt pin on teensy3.5
 const int DataPin = 24;
 const int IRQpin =  25;
 // tie pin 26 to ground
-PS2Keyboard ps2kb;
 #endif
 
 #ifdef FEATHERWING_TFT_TOUCH
-void pwrkb()
-{ pinMode(A1, OUTPUT);
-  digitalWrite(A1, 0);
-  pinMode(A0, OUTPUT);
-  digitalWrite(A0, 1);
-  delay(200);
-}
-const int IRQpin =  A3;
-const int DataPin = A2;
-// tie pin 26 to ground
-PS2Keyboard ps2kb;
+// 3V3
+const int IRQpin =  1;
+const int DataPin = 0;
+// ground
+
+// Note: if on FEATHERWING and TEENSY 4 the keyboard fails
+// edit PS2Keyboard.cpp and add delayMicroseconds(50) to
+// the start of the ps2interrupt function in teensy 
+// libraries
 #endif
 
 #ifdef FEATHERWING_TFT_TOUCH
@@ -2018,9 +2019,9 @@ void processButton(int but)
   // buttons 3-8 toggle help if power off
   if (but && novaKey<2)
   { if (novaKey<2 && but<48 && but!=26 && but!=49)
-          { if (helpScreen<0) about();
-        but=26;
-          }             
+	{ if (helpScreen<0) about();
+      but=26;
+    }             
   }
 
   // animate key toggle
@@ -2278,35 +2279,35 @@ void injectSerial(String s)
 }
 
 void about(void)
-{       tft.fillScreen(ILI9341_BLACK);
-                tft.setTextColor(ILI9341_WHITE);
-        tft.setCursor(0,0);
-                tft.println();
-                tft.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
-                tft.println();
-        tft.setTextColor(CL(192,192,64));
-                tft.println("Data General Nova - 1st 16 bit minicomputer in 1969");
-                tft.println("This circuit simulates a 1970 DG Nova 1200 machine,");
-                tft.println("equipped with 1 serial board and 4 8 KW core boards.");
-                tft.println("It runs the original 1970 DG BASIC software. You");
-                tft.println("can load and modify different 'sessions' to demo.");
-                tft.println();
-                tft.println("Note: the graphics terminal is an anachronism ;->>>");
-                tft.println();
-                tft.setTextColor(ILI9341_WHITE);
-        tft.println("Contains parts of simhv3-9");
-                tft.println("Copyright (c) 1993-2008, Robert M. Supnik");
-        tft.println();
-        tft.println("Contains image from FrontPanel 2.0");
-                tft.println("Copyright (c) 2007-2008, John Kichury");
-        tft.println();
-        tft.setTextColor(CL(192,192,64));
-                tft.println("** Press button or key to return **");
-                Serial.println("** Press button or key to continue **");
-                keySel=-99;
-            updateImage();
-                while(!getButtonPress(true) && !Serial.available());
-                restoreText(true);
+{ tft.fillScreen(ILI9341_BLACK);
+  tft.setTextColor(ILI9341_WHITE);
+  tft.setCursor(0,0);
+  tft.println();
+  tft.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
+  tft.println();
+  tft.setTextColor(CL(192,192,64));
+  tft.println("Data General Nova - 1st 16 bit minicomputer in 1969");
+  tft.println("This circuit simulates a 1970 DG Nova 1200 machine,");
+  tft.println("equipped with 1 serial board and 4 8 KW core boards.");
+  tft.println("It runs the original 1970 DG BASIC software. You");
+  tft.println("can load and modify different 'sessions' to demo.");
+  tft.println();
+  tft.println("Note: the graphics terminal is an anachronism ;->>>");
+  tft.println();
+  tft.setTextColor(ILI9341_WHITE);
+  tft.println("Contains parts of simhv3-9");
+  tft.println("Copyright (c) 1993-2008, Robert M. Supnik");
+  tft.println();
+  tft.println("Contains image from FrontPanel 2.0");
+  tft.println("Copyright (c) 2007-2008, John Kichury");
+  tft.println();
+  tft.setTextColor(CL(192,192,64));
+  tft.println("** Press button or key to return **");
+  Serial.println("** Press button or key to continue **");
+  keySel=-99;
+  updateImage();
+  while(!getButtonPress(true) && !Serial.available());
+  restoreText(true);
 }
 
 // process Serial data to pass to Nova or for monitor
@@ -2320,6 +2321,24 @@ void processSerial(int count)
   // power ON if not
   if (novaKey==1)
   { processButton(49);
+    return;
+  }
+  
+  if (b==PS2_F1)
+  { processButton(49);
+    return;
+  }
+  else if (b==PS2_F2)
+  { processButton(19);
+    return;
+  }
+  else if (b==PS2_F3)
+  { processButton(20);
+    return;
+  }
+  else if (b==PS2_F4)
+  { processButton(23);
+    return;
   }
 
   if (SerialIO) 
@@ -2332,9 +2351,9 @@ void processSerial(int count)
     }
     else
     { if (DEV_IS_DONE(INT_TTI)) 
-          { if (av) injectSerial(b); // avoid it getting lost
+     { if (av) injectSerial(b); // avoid it getting lost
         return;
-          }
+     }
       
       //if (DEV_IS_BUSY(INT_TTI))
       { ttibuf= b;
@@ -3056,7 +3075,6 @@ void setup() {
 #endif
 
 #ifdef FEATHERWING_TFT_TOUCH
-  pwrkb();
   if (!touch.begin())
     Serial.println("No touch screen found");
 #endif
@@ -3102,7 +3120,6 @@ void setup() {
 #if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41) || defined(FEATHERWING_TFT_TOUCH)
   ps2kb.begin(DataPin, IRQpin);
 #endif
-   
 }
 
 int runtime=0;
