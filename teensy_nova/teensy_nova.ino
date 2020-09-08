@@ -55,30 +55,58 @@ Marcel van Herk, 4 September 2020 - Added FEATHERWING_TFT_TOUCH mode
 Marcel van Herk, 5 September 2020 - Adjust help for touch mode; disable debounce for touch
                                   - Added SD card to use as 'eeprom' if found
 Marcel van Herk, 6 September 2020 - FEATHERWING Teensy4 kb changed pins and added change note
-                                  - Added PS2_F1 ..PS2_F4
+                                  - Added PS2_F1=on/off F2=restore F3=store F4=speed
+                                  - Added A1(15) switch; note overlaps bb version lights
+Marcel van Herk, 7 September 2020 - Added ps2kb power control and backlight control for FEATHERWING_TFT_TOUCH
+                                  - Added F5=about F6=cls F7=stop F8=step F9=continue F10=menu F12=help
+								  - Save power by touch checks per 200ms when nova is off
+Marcel van Herk, 8 September 2020 - Added ONOFFSLIDER, LAZY_BREADBOARD
 
 ****************************************************/
-// on older IDE's this define must be made manually
+// on older IDE's the Teensy type define must be made manually
 //#define ARDUINO_TEENSY35
 
-#define FEATHERWING_TFT_TOUCH
+// select breadboard type or Featherwing TFT board
+//#define FEATHERWING_TFT_TOUCH
+#define LAZY_BREADBOARD
 
 #include "SPI.h"
+#ifdef LAZY_BREADBOARD
+#include "Adafruit_ILI9341.h"
+#else
 #include "ILI9341_t3.h"
+#endif
 #include "EEPROM.h"
 #include "PS2Keyboard.h"
 #include <Adafruit_STMPE610.h>
 #include <SD.h>
 
+#ifdef LAZY_BREADBOARD
+#define SD_CS BUILTIN_SDCARD
+#define TFT_MISO 24
+#define TFT_LED 25
+#define TFT_SCK 26
+#define TFT_MOSI 27
+#define TFT_DC 28
+#define TFT_RESET 29
+#define TFT_CS 30
+#define TFT_GND 31
+#define TFT_VCC 32
+#else
 #ifdef FEATHERWING_TFT_TOUCH
 #define SD_CS 8
 #define TOUCH_CS 3
 #define TFT_CS 4
 #define TFT_DC 10
+#define BACKLIGHT 9
+#define PS2KBPWR 14
+#define PWRBUTTON 15
+#define ONOFFSLIDER 17
 #else
 #define SD_CS BUILTIN_SDCARD
 #define TFT_CS 10
 #define TFT_DC 9
+#endif
 #endif
 
 // set up variables using the SD utility library functions:
@@ -89,11 +117,21 @@ File myFile;
 bool hasSD = false;
 
 // Use hardware SPI
+#ifdef LAZY_BREADBOARD
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO);
+#define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
+#else
 ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
+#endif
 
 PS2Keyboard ps2kb;
 
-#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
+#if defined(LAZY_BREADBOARD)
+const int DataPin = 39;
+const int IRQpin =  38;
+#endif
+
+#if (defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)) && !defined(LAZY_BREADBOARD)
 // If PS2 keyboard runs on 3.3 volt
 // 3.3 volt pin on teensy3.5
 const int DataPin = 24;
@@ -246,6 +284,7 @@ int getButtonPress(bool raw)
   unsigned int repeatTime=100;
 
   static bool conf=false;
+#ifndef LAZY_BREADBOARD
   if (!conf)
   { pinMode(19, OUTPUT); // switch 1, 4 low
     digitalWrite(19, LOW);
@@ -281,6 +320,32 @@ int getButtonPress(bool raw)
     ((!digitalRead(7))<<5) |
     ((!digitalRead(1))<<6) |
     ((!digitalRead(0))<<7);
+#else
+  if (!conf)
+  { pinMode(17, INPUT_PULLUP); // btn 1: on-off
+    pinMode(19, INPUT_PULLUP); // btn 2: function (map btn 1-6 to nova keys)
+    pinMode(21, INPUT_PULLUP); // btn 3: 1
+    pinMode(23, INPUT_PULLUP); // btn 4: 2
+    pinMode(8, INPUT_PULLUP);  // btn 5: 3
+    pinMode(6, INPUT_PULLUP);  // btn 6: 4
+    pinMode(4, INPUT_PULLUP);  // btn 7: 5
+    pinMode(2, INPUT_PULLUP);  // btn 8: 6
+    conf=true;
+    lastChange = millis();
+    delay(10);
+    return 0;
+  }
+
+  int currentButtons =
+    ((!digitalRead(17))) |
+    ((!digitalRead(19))<<1) |
+    ((!digitalRead(21))<<2) |
+    ((!digitalRead(23))<<3) |
+    ((!digitalRead(8))<<4) |
+    ((!digitalRead(6))<<5) |
+    ((!digitalRead(4))<<6) |
+    ((!digitalRead(2))<<7);
+#endif
 
   // nothing happened
   if (stat==0 && currentButtons==previousButtons) 
@@ -370,6 +435,8 @@ int getButtonPress(bool raw)
   return 0;
 }
 
+int novaKey = 1;
+
 #ifdef FEATHERWING_TFT_TOUCH
 // get key with debounce, autorepeat and long press as configured in key array
 // raw keys used for menu only
@@ -381,6 +448,7 @@ int getTouchPress(bool raw)
 
   static unsigned int lastChange=0;
   static unsigned int autoRepeat=0;
+  static unsigned int lastTouch=0;
 
   int numBanks = sizeof(keys)/(numButtons*sizeof(keys[0]));
   unsigned int repeatTime=100;
@@ -396,85 +464,56 @@ int getTouchPress(bool raw)
   uint16_t x=0, y=0;
   uint8_t z=0;
   static int currentButtons = 0;
-  if (touch.touched())
-  { unsigned short *data1 = (unsigned short *)malloc(320*2);
-    unsigned short *data2 = (unsigned short *)malloc(320*2);
-    unsigned short *data3 = (unsigned short *)malloc(320*2);
-    unsigned short *data4 = (unsigned short *)malloc(320*2);
-    //unsigned short *data5 = (unsigned short *)malloc(320*10*2);
-    //unsigned short *data6 = (unsigned short *)malloc(320*10*2);
-
-    tft.readRect(0, 120, 320, 1, data1);  
-    tft.readRect(80, 0, 1, 240, data2);  
-    tft.readRect(160, 0, 1, 240, data3);  
-    tft.readRect(240, 0, 1, 240, data4);  
-    //tft.readRect(0, 0, 320, 10, data5);  
-    //tft.readRect(0, 123, 320, 10, data6);  
-
-    tft.drawLine(0, 120, 319, 120, CL(255,255,255));
-    tft.drawLine(80, 0, 80, 239, CL(255,255,255));
-    tft.drawLine(160, 0, 160, 239, CL(255,255,255));
-    tft.drawLine(240, 0, 240, 239, CL(255,255,255));
-
-/*
-    int s=tft.getTextSize();
-    tft.setTextSize(1);
-    tft.setTextColor(CL(255,255,255));
-    tft.setCursor(5,0);
-    tft.print(keyHelp(0).substring(0, 12));
-    tft.setCursor(85,0);
-    tft.print(keyHelp(1).substring(0, 12));
-    tft.setCursor(165,0);
-    tft.print(keyHelp(4).substring(0, 12));
-    tft.setCursor(245,0);
-    tft.print(keyHelp(5).substring(0, 12));
-    tft.setCursor(5,123);
-    tft.print(keyHelp(2).substring(0, 12));
-    tft.setCursor(85,123);
-    tft.print(keyHelp(3).substring(0, 12));
-    tft.setCursor(165,123);
-    tft.print(keyHelp(6).substring(0, 12));
-    tft.setCursor(245,123);
-    tft.print(keyHelp(7).substring(0, 12));
-    tft.setTextColor(CL(192,192,64));
-    tft.setTextSize(s);
-*/
-
-    while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
-    if (x && y) 
-    { //Serial.println(String(x) +" "+String(y)+" "+String(z));
-      x = (x-200)/1800; if (x>1) x=1; if (x<0) x=0;
-      y = (y-200)/900; if (y>3) y=3; if (y<0) y=0;
-      x=(y+x*4);
-      switch(x)
-      { case 0: currentButtons=1; break;
-        case 1: currentButtons=2; break;
-        case 2: currentButtons=16; break;
-        case 3: currentButtons=32; break;
-        case 4: currentButtons=4; break;
-        case 5: currentButtons=8; break;
-        case 6: currentButtons=64; break;
-        case 7: currentButtons=128; break;
+  if (millis()-lastTouch>200 || novaKey==2)
+  { lastTouch=millis();
+    if (touch.touched())
+    { unsigned short *data1 = (unsigned short *)malloc(320*2);
+      unsigned short *data2 = (unsigned short *)malloc(320*2);
+      unsigned short *data3 = (unsigned short *)malloc(320*2);
+      unsigned short *data4 = (unsigned short *)malloc(320*2);
+  
+      tft.readRect(0, 120, 320, 1, data1);  
+      tft.readRect(80, 0, 1, 240, data2);  
+      tft.readRect(160, 0, 1, 240, data3);  
+      tft.readRect(240, 0, 1, 240, data4);  
+  
+      tft.drawLine(0, 120, 319, 120, CL(255,255,255));
+      tft.drawLine(80, 0, 80, 239, CL(255,255,255));
+      tft.drawLine(160, 0, 160, 239, CL(255,255,255));
+      tft.drawLine(240, 0, 240, 239, CL(255,255,255));
+  
+      while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
+      if (x && y) 
+      { //Serial.println(String(x) +" "+String(y)+" "+String(z));
+        x = (x-200)/1800; if (x>1) x=1; if (x<0) x=0;
+        y = (y-200)/900; if (y>3) y=3; if (y<0) y=0;
+        x=(y+x*4);
+        switch(x)
+        { case 0: currentButtons=1; break;
+          case 1: currentButtons=2; break;
+          case 2: currentButtons=16; break;
+          case 3: currentButtons=32; break;
+          case 4: currentButtons=4; break;
+          case 5: currentButtons=8; break;
+          case 6: currentButtons=64; break;
+          case 7: currentButtons=128; break;
+        }
       }
+      delay(7);
+      tft.writeRect(0, 120, 320, 1, data1);  
+      tft.writeRect(80, 0, 1, 240, data2);  
+      tft.writeRect(160, 0, 1, 240, data3);  
+      tft.writeRect(240, 0, 1, 240, data4);  
+  
+      free(data1);
+      free(data2);
+      free(data3);
+      free(data4);
     }
-    delay(7);
-    tft.writeRect(0, 120, 320, 1, data1);  
-    tft.writeRect(80, 0, 1, 240, data2);  
-    tft.writeRect(160, 0, 1, 240, data3);  
-    tft.writeRect(240, 0, 1, 240, data4);  
-    //tft.writeRect(0, 0, 320, 10, data5);  
-    //tft.writeRect(0, 123, 320, 10, data6);  
-
-    free(data1);
-    free(data2);
-    free(data3);
-    free(data4);
-    //free(data5);
-    //free(data6);
-  }
-  else
-  { while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
-    currentButtons=0;
+    else
+    { while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
+      currentButtons=0;
+    }
   }
       
   // nothing happened
@@ -512,20 +551,20 @@ int getTouchPress(bool raw)
     if (currentButtons==0)
     { stat=0; // no button pressed
       genKey=true;
-          kinfo=lastKey;
+      kinfo=lastKey;
     }
     else
     { stat=1; // button just pressed
       kinfo = kinfo & 255;
       autoRepeat=0x7fffffff;
-          if (longpress)
-          { lastKey=kinfo;
+      if (longpress)
+      { lastKey=kinfo;
         return 0;
-          }
-          else
-          { genKey=true;
+      }
+      else
+      { genKey=true;
         lastKey=0;
-          }
+      }
     }      
   }
 
@@ -569,7 +608,6 @@ int getTouchPress(bool raw)
 // visual representation of the Nova
 // keys and switches
 int keySel=-1;
-int novaKey = 1;
 int novaSwitches = 0;
 int novaButton = -1;
 
@@ -600,6 +638,7 @@ void updateImage()
   { if (keySel<-1) keySel=-1;
 
     // draw background (darken when switch=OFF)
+#ifndef LAZY_BREADBOARD
     if (novaKey==1) 
     { unsigned short *data = (unsigned short *)malloc(gimp_image.width*gimp_image.height*2);
       for (unsigned int i=0; i<gimp_image.width*gimp_image.height; i++)
@@ -608,11 +647,26 @@ void updateImage()
       free(data);
     }
     else
-        { if (sw!=oldsw && sk==oldsk && keySel==oldks) // only draw switch area to avoid blinking
+    { if (sw!=oldsw && sk==oldsk && keySel==oldks) // only draw switch area to avoid blinking
         tft.writeRect(0, vshift+49, gimp_image.width, gimp_image.height-49, (uint16_t*)(gimp_image.pixel_data)+49*gimp_image.width);
-          else
+      else
         tft.writeRect(0, vshift, gimp_image.width, gimp_image.height, (uint16_t*)(gimp_image.pixel_data));
-        }
+    }
+#else
+    if (novaKey==1) 
+    { unsigned short *data = (unsigned short *)malloc(gimp_image.width*gimp_image.height*2);
+      for (unsigned int i=0; i<gimp_image.width*gimp_image.height; i++)
+        data[i] = (((uint16_t*)(gimp_image.pixel_data))[i]&0b1110011110011100)>>2;
+      tft.drawRGBBitmap(0, vshift, data, gimp_image.width, gimp_image.height);
+      free(data);
+    }
+    else
+    { if (sw!=oldsw && sk==oldsk && keySel==oldks) // only draw switch area to avoid blinking
+        tft.drawRGBBitmap(0, vshift+49, (uint16_t*)(gimp_image.pixel_data)+49*gimp_image.width, gimp_image.width, gimp_image.height);
+      else
+        tft.drawRGBBitmap(0, vshift, (uint16_t*)(gimp_image.pixel_data), gimp_image.width, gimp_image.height);
+    }
+#endif
 
     // draw toggle switches at rest
     for (int i=0; i<10; i++)
@@ -830,41 +884,43 @@ void Serialwrite(int a)
     
   if (inCursor) 
   { if (hasnum) // store graphics terminal number
-        { vals[inCursor-1]=val;
+    { vals[inCursor-1]=val;
       inCursor++;
-          if (inCursor>10) inCursor=0; // protect against array overflow
-          hasnum=false;
-          val=0;
-        }
+      if (inCursor>10) inCursor=0; // protect against array overflow
+      hasnum=false;
+      val=0;
+    }
     if (a==';') // execute graphics terminal command
-        { int n=inCursor-1; inCursor=0;
+    { int n=inCursor-1; inCursor=0;
       switch(command)
-          { case 'G':
+      { case 'G':
         case 'g': textCol=vals[0]%64; textLine=vals[1]%18; return;
-            case 'C':
+        case 'C':
         case 'c': textColor=CL(vals[0],vals[1],vals[2]); return;
-            case 'B':
+        case 'B':
         case 'b': textBgColor=CL(vals[0],vals[1],vals[2]); return;
 
-            case 'm':
+        case 'm':
         case 'M': x=vals[0]; y=vals[1]; textCol=textLine=0; return; //avoid scrolling
-            case 'l': 
+        case 'l': 
         case 'L': tft.drawLine(x, y, vals[0], vals[1], textColor); 
                           x=vals[0]; y=vals[1]; textCol=textLine=0; return;
 
-            case 'r': tft.drawRect(x, y, vals[0], vals[1], textColor); textCol=textLine=0; return;
+        case 'r': tft.drawRect(x, y, vals[0], vals[1], textColor); textCol=textLine=0; return;
         case 'R': tft.fillRect(x, y, vals[0], vals[1], textColor); textCol=textLine=0; return;
-            case 'e': tft.drawCircle(x, y, vals[0], textColor); textCol=textLine=0; return;
+        case 'e': tft.drawCircle(x, y, vals[0], textColor); textCol=textLine=0; return;
         case 'E': tft.fillCircle(x, y, vals[0], textColor); textCol=textLine=0; return;
 
-            case 't': 
+#ifndef LAZY_BREADBOARD
+        case 't': 
         case 'T': int s=tft.getTextSize(); 
-                          tft.setTextSize(vals[0]);
-                                  tft.setTextColor(textColor, textBgColor);
-                                  tft.setCursor(x, y);
-                                  for (int i=1; i<n; i++) tft.write(vals[i]); // not for control characters 
-                          tft.setTextSize(s); 
-                                  return;
+                  tft.setTextSize(vals[0]);
+                  tft.setTextColor(textColor, textBgColor);
+                  tft.setCursor(x, y);
+                  for (int i=1; i<n; i++) tft.write(vals[i]); // not for control characters 
+                  tft.setTextSize(s); 
+                  return;
+#endif
           }
         }
         return;
@@ -1877,8 +1933,21 @@ int menu(String info, String menuString, int ch, bool inject)
       N++;
       if (N%10==0) col=col+30;
     }
-
+	
     int k=getButtonPress(true);
+	if (ps2kb.available())
+	{ k=ps2kb.read();
+      switch(k)
+	  { case PS2_PAGEUP: k=3; break;
+	    case PS2_PAGEDOWN: k=4; break;
+		case PS2_UPARROW: k=5; break;
+		case PS2_DOWNARROW: k=7; break;
+		case 13: k=8; break;
+		case 27: k=6; break;
+		default: k=0;
+	  }
+	}
+	
     tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
     if (k==8) 
     { tft.fillScreen(ILI9341_BLACK);
@@ -2008,6 +2077,7 @@ int keyboard(String info, String menuString, int ch)
 }
 
 int tempHelp=0;
+int steppinghelp=0; 
 
 // process button choices
 void processButton(int but)
@@ -2042,8 +2112,8 @@ void processButton(int but)
   if (but==9) { novaButton=8; resetNova(); SerialIO=false; }
   if (but==10) { novaButton=9; stopNova(); SerialIO=false; }
 
-  if (but==11) { novaButton=10; startNova(novaSwitches); SerialIO=true; }
-  if (but==12) { novaButton=11; startNova(saved_PC); SerialIO=true; }
+  if (but==11) { novaButton=10; startNova(novaSwitches); SerialIO=true; steppinghelp=0; }
+  if (but==12) { novaButton=11; startNova(saved_PC); SerialIO=true; steppinghelp=0; }
 
   if (but==13) { novaButton=12; saved_PC=novaAddress=novaSwitches; deposit(novaAddress, novaSwitches); }
   if (but==14) { novaButton=13; novaAddress++; deposit(novaAddress, novaSwitches); }
@@ -2051,8 +2121,8 @@ void processButton(int but)
   if (but==15) { novaButton=14; saved_PC=novaAddress=novaSwitches; novaData = examine(novaAddress); }
   if (but==16) { novaButton=15; novaAddress++; novaData = examine(novaAddress); }
 
-  if (but==17) { novaButton=16; stepNova(); }
-  if (but==18) { novaButton=17; memstepNova(); }
+  if (but==17) { novaButton=16; stepNova(); steppinghelp=1; }
+  if (but==18) { novaButton=17; memstepNova(); steppinghelp=1; }
 
   // program load restores eeprom session and its dependencies and starts it
   if (but==19) 
@@ -2084,7 +2154,7 @@ void processButton(int but)
   if (but==23) { if (SIMINTERVAL>9000) SIMINTERVAL=1; //set speed
                  else if (SIMINTERVAL<2) SIMINTERVAL=31; 
                  else if (SIMINTERVAL<100) SIMINTERVAL=971;
-                                 else SIMINTERVAL=39731;
+                 else SIMINTERVAL=39731;
                }
   if (but==24) 
   { Serialwrite(-1); 
@@ -2122,7 +2192,7 @@ void processButton(int but)
                  keyBank=2;
                }
 
-               if (but==26) 
+  if (but==26) 
                { keySel=-99; // help
                  if (helpScreen<0) 
                  { helpScreen=0; showHelp();  
@@ -2137,6 +2207,8 @@ void processButton(int but)
                  keyBank=2;
                  reset_all(0);
                  
+
+#ifndef FEATHERWING_TFT_TOUCH
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
                  { analogWrite(14, 100); 
@@ -2146,6 +2218,16 @@ void processButton(int but)
                  { analogWrite(14, 200); 
                    digitalWrite(15, 1);
                  }
+#else
+                 if (novaKey==2) 
+                 { digitalWrite(PS2KBPWR, 1); 
+                   //digitalWrite(BACKLIGHT, 1); 
+                 }
+                 else
+                 { digitalWrite(PS2KBPWR, 0); 
+                   //digitalWrite(BACKLIGHT, 0); 
+                 }
+#endif
 
                  // analogWrite(16-novaKey, 20); analogWrite(13+novaKey, 0);
                  if (novaKey==2) 
@@ -2166,6 +2248,7 @@ void processButton(int but)
 
                  delay(300); 
 
+#ifndef FEATHERWING_TFT_TOUCH
                  // Dim green light when ON
                  if (novaKey==2) 
                    analogWrite(14, 3); 
@@ -2173,6 +2256,7 @@ void processButton(int but)
                  { analogWrite(14, 0);
                    digitalWrite(15, 0);
                  }
+#endif
 
                  tft.setCursor(0, 0);
                  tft.fillScreen(ILI9341_BLACK);
@@ -2306,7 +2390,9 @@ void about(void)
   Serial.println("** Press button or key to continue **");
   keySel=-99;
   updateImage();
-  while(!getButtonPress(true) && !Serial.available());
+  while(!getButtonPress(true) && !Serial.available() && !ps2kb.available());
+  if (Serial.available()) Serial.read();
+  if (ps2kb.available()) ps2kb.read();
   restoreText(true);
 }
 
@@ -2325,19 +2411,47 @@ void processSerial(int count)
   }
   
   if (b==PS2_F1)
-  { processButton(49);
+  { processButton(49); // on-off
     return;
   }
   else if (b==PS2_F2)
-  { processButton(19);
+  { processButton(19); // restore
     return;
   }
   else if (b==PS2_F3)
-  { processButton(20);
+  { processButton(20); // store
     return;
   }
   else if (b==PS2_F4)
-  { processButton(23);
+  { processButton(23); // speed
+    return;
+  }
+  else if (b==PS2_F5) 
+  { about();           // about
+    return;
+  }
+  else if (b==PS2_F6)
+  { processButton(25); // cls
+    return;
+  }
+  else if (b==PS2_F7)
+  { processButton(10); // stop
+    return;
+  }
+  else if ( b==PS2_F8)
+  { processButton(17); // step
+    return;
+  }
+  else if (b==PS2_F9)
+  { processButton(12); // continue
+    return;
+  }
+  else if (b==PS2_F10)
+  { processButton(24); // menu
+    return;
+  }
+  else if (b==PS2_F12)
+  { processButton(26); // help
     return;
   }
 
@@ -3059,8 +3173,8 @@ void setup() {
 // on the long teensy boards, the TFT must overlap pins 33-39 (2 pin stick over), use pin 32 for LED, 36 for reset
 // all other pins are wired to the orginals, so they are set to input for safety
 
-#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
-                                        // tft 9 wired to MISO (pin 12)
+#if (defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)) && !defined(LAZY_BREADBOARD)
+                        // tft 9 wired to MISO (pin 12)
   pinMode(32, OUTPUT);
   digitalWrite(32, 1);  // tft 8 through 470 ohm resistor (LED)
   pinMode(33, INPUT);   // tft 7 wired to SCK (pin 13)
@@ -3074,9 +3188,28 @@ void setup() {
   delay(100);
 #endif
 
+#ifdef LAZY_BREADBOARD
+  pinMode(TFT_LED, OUTPUT);
+  digitalWrite(TFT_LED, 1);
+  pinMode(TFT_GND, OUTPUT);
+  digitalWrite(TFT_GND, 0);
+  pinMode(TFT_VCC, OUTPUT);
+  digitalWrite(TFT_VCC, 1);
+#endif
+
 #ifdef FEATHERWING_TFT_TOUCH
   if (!touch.begin())
     Serial.println("No touch screen found");
+
+  // ps2 keyboard interface board
+  pinMode(PWRBUTTON, INPUT_PULLUP); // switch
+  pinMode(ONOFFSLIDER, INPUT_PULLUP); // switch
+  pinMode(PS2KBPWR, OUTPUT);
+  digitalWrite(PS2KBPWR, 1); // kb ON
+  
+  // jumper wire
+  pinMode(BACKLIGHT, OUTPUT);
+  digitalWrite(BACKLIGHT, 1); // light ON
 #endif
 
   if (!card.init(SPI_HALF_SPEED, SD_CS)) 
@@ -3103,15 +3236,21 @@ void setup() {
 // the default value is 30Mhz, but most ILI9341 displays
 // can handle at least 60Mhz and as much as 100Mhz
   tft.begin();
+#ifndef LAZY_BREADBOARD
   tft.setClock(75000000);
   tft.setRotation(1);
+#else
+  tft.setRotation(3);
+#endif
   tft.fillScreen(ILI9341_BLACK);
 
   Serial.begin(9600);
   Serial.println("Teensy Nova 1210 simulator!"); 
 
+#ifndef FEATHERWING_TFT_TOUCH
   pinMode(14, OUTPUT); // red/green led, pin controlled analog
   pinMode(15, OUTPUT); // red/green led, pin controlled digital to support TEENSY35
+#endif
     
   //Draw Nova frontpanel
   updateImage();
@@ -3132,9 +3271,9 @@ void loop(void) {
 
   // update MIPS when changing speed
   if (!novaRunning || prevSIMINTERVAL!=SIMINTERVAL || runtime>10000000)
-  {     runtime=0;
+  { runtime=0;
     instructions=0;
-        prevSIMINTERVAL=SIMINTERVAL;
+    prevSIMINTERVAL=SIMINTERVAL;
   }
 
   // Injected or true serial data ?
@@ -3176,29 +3315,47 @@ void loop(void) {
     instructions += SIMINTERVAL;
   }
 
+#ifdef FEATHERWING_TFT_TOUCH
+  static bool prev15=true;
+  bool val15 = digitalRead(PWRBUTTON);
+  if (val15!=prev15) 
+  { delay(50);
+    val15 = digitalRead(PWRBUTTON);
+    if (val15!=prev15) 
+    { prev15=val15;
+      if(val15==false) 
+	  { processButton(49);
+        a=49;
+	  }
+	}
+  }
+  
+  digitalWrite(BACKLIGHT, digitalRead(ONOFFSLIDER));
+#endif
+
   // something to do -> update screen
-  if (a || novaRunning || count) 
-        updateImage();
+  if (a || novaRunning || count)
+    updateImage();
 
   // for MIPS calculation
   if(novaRunning)
-        runtime += micros()-t;
+    runtime += micros()-t;
 
   // update MIPS display (note screen refresh and serial output is counted in time)
   if (runtime && instructions>100 && novaKey>1)
   { tft.setTextColor(CL(255,255,0), CL(0,0,0));
     tft.setCursor(276, 178);
     if (novaRunning) tft.print(String((float)instructions/runtime)+" ");
-        else tft.print("     ");
+    else tft.print("     ");
   }
   
   // show disassembled code as well
-  if (helpScreen>=0 && novaKey>1)
+  if ((helpScreen>=0 || steppinghelp>0) && novaKey>1)
   { tft.setTextColor(CL(128,255,0), CL(40,75,125));
     tft.setCursor(100, 229);
-        int s=novaData;
-        String d=printDisas(examine(novaAddress), OCT);
+    int s=novaData;
+    String d=printDisas(examine(novaAddress), OCT);
     tft.print(toOct(novaAddress)+" "+d+makespc(20-d.length()));
-        novaData=s;
+    novaData=s;
   }
 }

@@ -57,10 +57,10 @@
 #define PS2_F2				17
 #define PS2_F3				18
 #define PS2_F4				19
-#define PS2_F5				22
-#define PS2_F6				23
-#define PS2_F7				24
-#define PS2_F8				27
+#define PS2_F5				20
+#define PS2_F6				22
+#define PS2_F7				23
+#define PS2_F8				24
 #define PS2_F9				28
 #define PS2_F10				29
 #define PS2_F11				30
