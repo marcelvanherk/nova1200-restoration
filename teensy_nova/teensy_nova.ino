@@ -61,12 +61,18 @@ Marcel van Herk, 7 September 2020 - Added ps2kb power control and backlight cont
                                   - Added F5=about F6=cls F7=stop F8=step F9=continue F10=menu F12=help
 								  - Save power by touch checks per 200ms when nova is off
 Marcel van Herk, 8 September 2020 - Added ONOFFSLIDER, LAZY_BREADBOARD
+Marcel van Herk, 9 September 2020 - Moved ONOFFSLIDER jumper wire, fixed button swap, moved text cursor one pixel left avoids line wrap
+                                    Note: block out these lines (2x) in Adafruit_SPITFT.cpp makes LAZY_BREADBOARD TFT 3 times faster!
+                                      #if defined(__IMXRT1052__) || defined(__IMXRT1062__) // Teensy 4.x
+                                      for (volatile uint8_t i = 0; i < 1; i++)
+                                      ;
+Marcel van Herk, 10 September 2020 - Centralized most pin defines; added ps2 keyboard to LAZY_BREADBOARD
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
 //#define ARDUINO_TEENSY35
 
-// select breadboard type or Featherwing TFT board
+// select breadboard type or Featherwing TFT board (define none or one)
 //#define FEATHERWING_TFT_TOUCH
 #define LAZY_BREADBOARD
 
@@ -82,31 +88,46 @@ Marcel van Herk, 8 September 2020 - Added ONOFFSLIDER, LAZY_BREADBOARD
 #include <SD.h>
 
 #ifdef LAZY_BREADBOARD
-#define SD_CS BUILTIN_SDCARD
-#define TFT_MISO 24
-#define TFT_LED 25
-#define TFT_SCK 26
-#define TFT_MOSI 27
-#define TFT_DC 28
-#define TFT_RESET 29
-#define TFT_CS 30
-#define TFT_GND 31
-#define TFT_VCC 32
+#  define SD_CS BUILTIN_SDCARD
+#  define TFT_MISO 24
+#  define TFT_LED 25
+#  define TFT_SCK 26
+#  define TFT_MOSI 27
+#  define TFT_DC 28
+#  define TFT_RESET 29
+#  define TFT_CS 30
+#  define TFT_GND 31
+#  define TFT_VCC 32
+#  define ONOFFSLIDER 5
+#  define PS2_GND 39
+#  define PS2_CLK 38
+#  define PS2_DATA 37
+#  define PS2_VCC 36
 #else
-#ifdef FEATHERWING_TFT_TOUCH
-#define SD_CS 8
-#define TOUCH_CS 3
-#define TFT_CS 4
-#define TFT_DC 10
-#define BACKLIGHT 9
-#define PS2KBPWR 14
-#define PWRBUTTON 15
-#define ONOFFSLIDER 17
-#else
-#define SD_CS BUILTIN_SDCARD
-#define TFT_CS 10
-#define TFT_DC 9
-#endif
+#  ifdef FEATHERWING_TFT_TOUCH
+#    define SD_CS 8
+#    define TOUCH_CS 3
+#    define TFT_CS 4
+#    define TFT_DC 10
+#    define TFT_LED 9
+#    define PS2_CLK 1
+#    define PS2_DATA 0
+#    define PS2_VCC 14
+#    define PWRBUTTON 15
+#    define ONOFFSLIDER 5
+     // free pins a2=16, a3=17, a6=20, a14=on/off
+#  else
+#    define TFT_CS 10
+#    define TFT_DC 9
+#    define ONOFFSLIDER 2
+#    if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
+#      define SD_CS BUILTIN_SDCARD
+#      define TFT_LED 32
+#      define PS2_GND 26
+#      define PS2_CLK 25
+#      define PS2_DATA 24
+#    endif
+#  endif
 #endif
 
 // set up variables using the SD utility library functions:
@@ -116,7 +137,7 @@ SdFile root;
 File myFile;
 bool hasSD = false;
 
-// Use hardware SPI
+// Use software SPI on LAZY, else hardware SPI
 #ifdef LAZY_BREADBOARD
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO);
 #define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
@@ -125,31 +146,6 @@ ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
 #endif
 
 PS2Keyboard ps2kb;
-
-#if defined(LAZY_BREADBOARD)
-const int DataPin = 39;
-const int IRQpin =  38;
-#endif
-
-#if (defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)) && !defined(LAZY_BREADBOARD)
-// If PS2 keyboard runs on 3.3 volt
-// 3.3 volt pin on teensy3.5
-const int DataPin = 24;
-const int IRQpin =  25;
-// tie pin 26 to ground
-#endif
-
-#ifdef FEATHERWING_TFT_TOUCH
-// 3V3
-const int IRQpin =  1;
-const int DataPin = 0;
-// ground
-
-// Note: if on FEATHERWING and TEENSY 4 the keyboard fails
-// edit PS2Keyboard.cpp and add delayMicroseconds(50) to
-// the start of the ps2interrupt function in teensy 
-// libraries
-#endif
 
 #ifdef FEATHERWING_TFT_TOUCH
 Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
@@ -438,8 +434,8 @@ int getButtonPress(bool raw)
 int novaKey = 1;
 
 #ifdef FEATHERWING_TFT_TOUCH
-// get key with debounce, autorepeat and long press as configured in key array
-// raw keys used for menu only
+// get touch with debounce, autorepeat and long press as configured in key array
+// raw touch used for menu only
 int getTouchPress(bool raw)
 { bool genKey=false;
   static int stat=0;
@@ -652,7 +648,7 @@ void updateImage()
       else
         tft.writeRect(0, vshift, gimp_image.width, gimp_image.height, (uint16_t*)(gimp_image.pixel_data));
     }
-#else
+#else // difference in libraries ....
     if (novaKey==1) 
     { unsigned short *data = (unsigned short *)malloc(gimp_image.width*gimp_image.height*2);
       for (unsigned int i=0; i<gimp_image.width*gimp_image.height; i++)
@@ -806,7 +802,7 @@ void showHelp() {
   tft.println(makespc(23-(l>>1))+"FUNC "+items[keyBank]);
   tft.println("");
   tft.setTextColor(CL(192,192,64));
-  tft.print("Teensy Nova1200 sim; mvh " __DATE__ "; Memory "+String(MEMSIZE)+" kW");
+  tft.print("Teensy Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
 }
 
 // monitor display
@@ -818,14 +814,14 @@ int textLine=0;
 void restoreText(bool force)
 { for (int i=0; i<18; i++)
     for (int j=0; j<64; j++)
-        { if (force || textBackup[i*64+j]!=textBuffer[i*64+j])
-      { tft.setCursor(j*5,i*8);
+    { if (force || textBackup[i*64+j]!=textBuffer[i*64+j])
+      { tft.setCursor(j*5-1,i*8);
         tft.setTextColor(CL(128,128,96), CL(0,0,0));
-                if (textBuffer[i*64+j]==0) textBuffer[i*64+j]=' ';
-                tft.write(textBuffer[i*64+j]);
+        if (textBuffer[i*64+j]==0) textBuffer[i*64+j]=' ';
+        tft.write(textBuffer[i*64+j]);
         textBackup[i*64+j]=textBuffer[i*64+j];
-          }
-        }
+      }
+    }
 }
 
 void clearText(bool force)
@@ -911,16 +907,18 @@ void Serialwrite(int a)
         case 'e': tft.drawCircle(x, y, vals[0], textColor); textCol=textLine=0; return;
         case 'E': tft.fillCircle(x, y, vals[0], textColor); textCol=textLine=0; return;
 
-#ifndef LAZY_BREADBOARD
         case 't': 
-        case 'T': int s=tft.getTextSize(); 
+        case 'T': 
+                  int s=1; 
+#ifndef LAZY_BREADBOARD  // difference in libraries ...
+                  s=tft.getTextSize(); 
+#endif
                   tft.setTextSize(vals[0]);
                   tft.setTextColor(textColor, textBgColor);
                   tft.setCursor(x, y);
                   for (int i=1; i<n; i++) tft.write(vals[i]); // not for control characters 
                   tft.setTextSize(s); 
                   return;
-#endif
           }
         }
         return;
@@ -983,15 +981,15 @@ void Serialwrite(int a)
 
     textCol++;
     if (textCol>=64)
-        { textLine++;
+    { textLine++;
       textCol=0;
-          if (textLine>=18) {scroll(); textLine=17;}
-        }
-        tft.setCursor(textCol*5,textLine*8);
+      if (textLine>=18) {scroll(); textLine=17;}
+    }
+    tft.setCursor(textCol*5-1,textLine*8);
     tft.setTextColor(textColor, textBgColor);
     tft.write(a);
-        textBuffer[textLine*64+textCol]=a;
-        textBackup[textLine*64+textCol]=a;
+    textBuffer[textLine*64+textCol]=a;
+    textBackup[textLine*64+textCol]=a;
   }
 }
 
@@ -1520,53 +1518,53 @@ void unload(const unsigned short *p, int eeprom, int base)
     if (p) v = (p[i]-v)&0xffff;
 
     if (v==startval && i<MEMSIZE) 
-          countsame++;
-        else 
-        { if (countsame > 3 || i==MEMSIZE)
+      countsame++;
+    else 
+    { if (countsame > 3 || i==MEMSIZE)
       { if (length)
-        { if (!eeprom) Serial.print(String(block) + "," + String(length) + ",");
-              ADD_DIFF(block);
-              ADD_DIFF(length);
-          for (int j=0; j<length; j++) 
-              { unsigned short v=examine(block+j);
-            if (p) v = (p[block+j]-v)&0xffff;
-            if (!eeprom) Serial.print(String(v)); 
-                        ADD_DIFF(v);
-                        if (!eeprom) Serial.print(","); 
-              }
-          if (!eeprom) Serial.println();
-                }
-            if (!eeprom) Serial.println(String(block+length+32768) + "," + String(countsame) + "," + String(startval) + ",");
-            ADD_DIFF(block+length+32768);
-                ADD_DIFF(countsame);
-                ADD_DIFF(startval);
-            block=i;
-                length=0;
-          }
-          else
-            length += countsame;
-      startval=v;
-      countsame=1;
-        }
-
-    if (length>=12 || (i==MEMSIZE && length>0))
         { if (!eeprom) Serial.print(String(block) + "," + String(length) + ",");
           ADD_DIFF(block);
           ADD_DIFF(length);
-      for (int j=0; j<length; j++) 
+          for (int j=0; j<length; j++) 
           { unsigned short v=examine(block+j);
+            if (p) v = (p[block+j]-v)&0xffff;
+            if (!eeprom) Serial.print(String(v)); 
+            ADD_DIFF(v);
+            if (!eeprom) Serial.print(","); 
+          }
+          if (!eeprom) Serial.println();
+        }
+        if (!eeprom) Serial.println(String(block+length+32768) + "," + String(countsame) + "," + String(startval) + ",");
+        ADD_DIFF(block+length+32768);
+        ADD_DIFF(countsame);
+        ADD_DIFF(startval);
+        block=i;
+        length=0;
+      }
+      else
+        length += countsame;
+      startval=v;
+      countsame=1;
+    }
+
+    if (length>=12 || (i==MEMSIZE && length>0))
+    { if (!eeprom) Serial.print(String(block) + "," + String(length) + ",");
+      ADD_DIFF(block);
+      ADD_DIFF(length);
+      for (int j=0; j<length; j++) 
+      { unsigned short v=examine(block+j);
         if (p) v = (p[block+j]-v)&0xffff;
         if (!eeprom) Serial.print(String(v)); 
-            ADD_DIFF(v);
-                if (!eeprom) Serial.print(","); 
-          }
+        ADD_DIFF(v);
+        if (!eeprom) Serial.print(","); 
+      }
       if (!eeprom) Serial.println();
-          block=i;
-          length=0;
-          startval=v;
-        }
-        if (!eeprom) 
-          while (!Serial.availableForWrite()) delay(10);
+      block=i;
+      length=0;
+      startval=v;
+    }
+    if (!eeprom) 
+      while (!Serial.availableForWrite()) delay(10);
   }
   
   Serial.println("Length (words): " + String(ndiff));
@@ -1574,8 +1572,8 @@ void unload(const unsigned short *p, int eeprom, int base)
   { Serial.println("Session does not fit in eeprom; not stored");
     tft.setCursor(0,0);
     tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
-        tft.println("** Session does not fit in eeprom; not stored **");
-        delay(5000);
+    tft.println("** Session does not fit in eeprom; not stored **");
+    delay(5000);
   }
   else if (eeprom && hasSD)
   { unsigned short s=ndiff;
@@ -2218,17 +2216,27 @@ void processButton(int but)
                  { analogWrite(14, 200); 
                    digitalWrite(15, 1);
                  }
-#else
-                 if (novaKey==2) 
-                 { digitalWrite(PS2KBPWR, 1); 
-                   //digitalWrite(BACKLIGHT, 1); 
-                 }
-                 else
-                 { digitalWrite(PS2KBPWR, 0); 
-                   //digitalWrite(BACKLIGHT, 0); 
-                 }
 #endif
 
+#ifdef PS2_VCC
+                 if (novaKey==2) 
+                 { digitalWrite(PS2_VCC, 1); 
+                   if (PS2_VCC>24)
+                   { digitalWrite(PS2_VCC-1, 1); // kb ON
+                     digitalWrite(PS2_VCC-2, 1); // kb ON
+                   }
+                    //digitalWrite(TFT_LED, 1); 
+                 }
+                 else
+                 { digitalWrite(PS2_VCC, 0); 
+                   if (PS2_VCC>24)
+                   { digitalWrite(PS2_VCC-1, 0); // kb OFF
+                     digitalWrite(PS2_VCC-2, 0); // kb OFF
+                   }
+                   //digitalWrite(TFT_LED, 0); 
+                 }
+#endif
+      
                  // analogWrite(16-novaKey, 20); analogWrite(13+novaKey, 0);
                  if (novaKey==2) 
                  { EEPROM.get(0, novaSwitches);
@@ -2786,26 +2794,26 @@ void processSerial(int count)
       }
 
       else if (line.startsWith("version")) {
-                Serial.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
-                Serial.println();
-                Serial.println("Data General Nova - 1st 16 bit minicomputer in 1969");
-                Serial.println("This circuit simulates a 1970 DG Nova 1200 machine,");
-                Serial.println("equipped with 1 serial board and 4 8 KW core boards.");
-                Serial.println("It runs the original 1970 DG BASIC software. You");
-                Serial.println("can load and modify different 'sessions' to demo.");
+        Serial.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
         Serial.println();
-                Serial.println("Note: the graphics terminal is an anachronism ;->>>");
+        Serial.println("Data General Nova - 1st 16 bit minicomputer in 1969");
+        Serial.println("This circuit simulates a 1970 DG Nova 1200 machine,");
+        Serial.println("equipped with 1 serial board and 4 8 KW core boards.");
+        Serial.println("It runs the original 1970 DG BASIC software. You");
+        Serial.println("can load and modify different 'sessions' to demo.");
+        Serial.println();
+        Serial.println("Note: the graphics terminal is an anachronism ;->>>");
         Serial.println();
         Serial.println("Contains parts of simhv3-9");
-                Serial.println("Copyright (c) 1993-2008, Robert M. Supnik");
+        Serial.println("Copyright (c) 1993-2008, Robert M. Supnik");
         Serial.println();
         Serial.println("Contains image from FrontPanel 2.0");
-                Serial.println("Copyright (c) 2007-2008, John Kichury");
+        Serial.println("Copyright (c) 2007-2008, John Kichury");
         nextcmd = "";
       }
 
       else if (line.startsWith("about")) {
-                about();
+        about();
         nextcmd = "";
       }
 
@@ -2846,9 +2854,9 @@ void processSerial(int count)
 
       // restore memory from eeprom
       else if (line.startsWith("restore"))
-          { if (hasSD) restoreSession(".SD");
-            else restoreSession(".EEPROM");
-          }
+      { if (hasSD) restoreSession(".SD");
+        else restoreSession(".EEPROM");
+      }
 
       // store memory to eeprom
       else if (line.startsWith("store"))
@@ -3110,25 +3118,25 @@ void processSerial(int count)
           Serial.println("Tape "+filename+" not found");
       }
 
-          else if (line.startsWith("unloaddiff "))
-          { int pos1=11;
+      else if (line.startsWith("unloaddiff "))
+      { int pos1=11;
         String filename = line.substring(pos1, 99).toUpperCase();
         unloadDiffCode(filename);
-          }
+      }
 
-          else if (line.startsWith("unload"))
-          { unload((unsigned short *) NULL, 0, 0);
-          }
+      else if (line.startsWith("unload"))
+      { unload((unsigned short *) NULL, 0, 0);
+      }
 
-          else if (line.startsWith("cleareepromsession")) // undocumented
-          { EEPROM.write(38, 0);
+      else if (line.startsWith("cleareepromsession")) // undocumented
+      { EEPROM.write(38, 0);
         EEPROM.write(39, 0);
         EEPROM.write(56, 0);
         EEPROM.write(57, 0);
         EEPROM.write(58, 0);
         EEPROM.write(59, 0);
-            Serial.println("Erased EEPROM session; will not load anymore");
-          }
+        Serial.println("Erased EEPROM session; will not load anymore");
+      }
 
       else if (line.startsWith("session "))
       { int pos1 = 8;
@@ -3136,28 +3144,28 @@ void processSerial(int count)
                 
         if (filename=="LIST")
         { for (int i=1; i<100; i++)
-                  { String name=getSessionName(-i);
-                int len= getSessionLength(getSessionID(name));
-                if (name!="" && len>0)
-                  Serial.println(name+" ; length "+String(len)+
-                                     "; id: "+String(getSessionID(name))+
-                                     "; based on: "+getSessionName(getSessionBase(getSessionID(name))));
-                  }
+          { String name=getSessionName(-i);
+            int len= getSessionLength(getSessionID(name));
+            if (name!="" && len>0)
+            Serial.println(name+" ; length "+String(len)+
+                           "; id: "+String(getSessionID(name))+
+                            "; based on: "+getSessionName(getSessionBase(getSessionID(name))));
+          }
         }
-                else
-                { int id=getSessionID(filename);
-              if (id>0) restoreSession(filename);
-                  else Serial.println("Session "+filename+" not found");
-                  nextcmd = "run 2";
-                }
+        else
+        { int id=getSessionID(filename);
+          if (id>0) restoreSession(filename);
+          else Serial.println("Session "+filename+" not found");
+          nextcmd = "run 2";
+        }
       }
 
       else if (line.startsWith("speed "))
       { int pos1 = 6;
         unsigned short a = readOct(line, pos1);
-                SIMINTERVAL=a;
-                nextcmd="";
-          }       
+        SIMINTERVAL=a;
+        nextcmd="";
+      }       
 
       else if (line.length()>0)
         Serial.println("Unknown or mistyped command ignored");
@@ -3189,29 +3197,47 @@ void setup() {
 #endif
 
 #ifdef LAZY_BREADBOARD
-  pinMode(TFT_LED, OUTPUT);
-  digitalWrite(TFT_LED, 1);
   pinMode(TFT_GND, OUTPUT);
   digitalWrite(TFT_GND, 0);
   pinMode(TFT_VCC, OUTPUT);
   digitalWrite(TFT_VCC, 1);
+  pinMode(TFT_VCC, OUTPUT);
+  digitalWrite(TFT_VCC, 1);
 #endif
+
+#ifdef TFT_LED
+  pinMode(TFT_LED, OUTPUT);
+  digitalWrite(TFT_LED, 1);
+#endif
+
+#ifdef PS2_VCC
+  pinMode(PS2_VCC, OUTPUT);
+  digitalWrite(PS2_VCC, 1); // kb ON
+  if (PS2_VCC>24)
+  { pinMode(PS2_VCC-1, OUTPUT);
+    digitalWrite(PS2_VCC-1, 1); // kb ON
+    pinMode(PS2_VCC-2, OUTPUT);
+    digitalWrite(PS2_VCC-2, 1); // kb ON
+  }
+#endif
+
+  pinMode(ONOFFSLIDER, INPUT_PULLUP); // switch
 
 #ifdef FEATHERWING_TFT_TOUCH
   if (!touch.begin())
     Serial.println("No touch screen found");
 
-  // ps2 keyboard interface board
+  // power button ps2 keyboard interface board
   pinMode(PWRBUTTON, INPUT_PULLUP); // switch
-  pinMode(ONOFFSLIDER, INPUT_PULLUP); // switch
-  pinMode(PS2KBPWR, OUTPUT);
-  digitalWrite(PS2KBPWR, 1); // kb ON
-  
-  // jumper wire
-  pinMode(BACKLIGHT, OUTPUT);
-  digitalWrite(BACKLIGHT, 1); // light ON
 #endif
 
+#ifdef TFT_LED
+  // jumper wire or resistor or direct connect
+  pinMode(TFT_LED, OUTPUT);
+  digitalWrite(TFT_LED, 1); // light ON
+#endif
+
+#ifdef SD_CS
   if (!card.init(SPI_HALF_SPEED, SD_CS)) 
   { Serial.println("No SD card found");
   }
@@ -3231,6 +3257,7 @@ void setup() {
       eepromwords = 10000; // SD card session size limited by RAM for buffers only
     }
   }
+#endif
 
 // Note: you can now set the SPI speed to any value
 // the default value is 30Mhz, but most ILI9341 displays
@@ -3245,6 +3272,7 @@ void setup() {
   tft.fillScreen(ILI9341_BLACK);
 
   Serial.begin(9600);
+  
   Serial.println("Teensy Nova 1210 simulator!"); 
 
 #ifndef FEATHERWING_TFT_TOUCH
@@ -3257,7 +3285,7 @@ void setup() {
   tft.setCursor(0,0);
   
 #if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41) || defined(FEATHERWING_TFT_TOUCH)
-  ps2kb.begin(DataPin, IRQpin);
+  ps2kb.begin(PS2_DATA, PS2_CLK);
 #endif
 }
 
@@ -3315,7 +3343,7 @@ void loop(void) {
     instructions += SIMINTERVAL;
   }
 
-#ifdef FEATHERWING_TFT_TOUCH
+#ifdef PWRBUTTON
   static bool prev15=true;
   bool val15 = digitalRead(PWRBUTTON);
   if (val15!=prev15) 
@@ -3329,12 +3357,14 @@ void loop(void) {
 	  }
 	}
   }
-  
-  digitalWrite(BACKLIGHT, digitalRead(ONOFFSLIDER));
+#endif
+
+#ifdef TFT_LED
+  digitalWrite(TFT_LED, digitalRead(ONOFFSLIDER));
 #endif
 
   // something to do -> update screen
-  if (a || novaRunning || count)
+  if ((a || novaRunning || count))
     updateImage();
 
   // for MIPS calculation
