@@ -67,6 +67,10 @@ Marcel van Herk, 9 September 2020 - Moved ONOFFSLIDER jumper wire, fixed button 
                                       for (volatile uint8_t i = 0; i < 1; i++)
                                       ;
 Marcel van Herk, 10 September 2020 - Centralized most pin defines; added ps2 keyboard to LAZY_BREADBOARD
+Marcel van Herk, 16 September 2020 - Added WIFI through WifiModem on Serial4 or Serial8, set 115200 baud and "do not Show"
+Marcel van Herk, 26 October 2020   - Split LAZY_BREADBOARD into LAZY_BREADBOARDBTN (vertical vs horizontal buttons) 
+                                     and LAZY_BREADBOARDTFT (TFT overlaps top right pins of large teensy); HASNOSD flag
+				     Disabled ONOFFSLIDER for non FEATHERWING_TFT_TOUCH
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -74,20 +78,23 @@ Marcel van Herk, 10 September 2020 - Centralized most pin defines; added ps2 key
 
 // select breadboard type or Featherwing TFT board (define none or one)
 //#define FEATHERWING_TFT_TOUCH
-#define LAZY_BREADBOARD
+#define LAZY_BREADBOARDTFT
+//#define LAZY_BREADBOARDBTN
 
 #include "SPI.h"
-#ifdef LAZY_BREADBOARD
+#if defined(LAZY_BREADBOARDTFT) || defined(ARDUINO_LOLIN32)
 #include "Adafruit_ILI9341.h"
 #else
 #include "ILI9341_t3.h"
 #endif
 #include "EEPROM.h"
 #include "PS2Keyboard.h"
+#ifdef FEATHERWING_TFT_TOUCH
 #include <Adafruit_STMPE610.h>
+#endif
 #include <SD.h>
 
-#ifdef LAZY_BREADBOARD
+#ifdef LAZY_BREADBOARDTFT
 #  define SD_CS BUILTIN_SDCARD
 #  define TFT_MISO 24
 #  define TFT_LED 25
@@ -102,6 +109,7 @@ Marcel van Herk, 10 September 2020 - Centralized most pin defines; added ps2 key
 #  define PS2_GND 39
 #  define PS2_CLK 38
 #  define PS2_DATA 37
+#  define WIFI Serial8
 #  define PS2_VCC 36
 #else
 #  ifdef FEATHERWING_TFT_TOUCH
@@ -115,6 +123,7 @@ Marcel van Herk, 10 September 2020 - Centralized most pin defines; added ps2 key
 #    define PS2_VCC 14
 #    define PWRBUTTON 15
 #    define ONOFFSLIDER 5
+#    define WIFI Serial4
      // free pins a2=16, a3=17, a6=20, a14=on/off
 #  else
 #    define TFT_CS 10
@@ -130,16 +139,43 @@ Marcel van Herk, 10 September 2020 - Centralized most pin defines; added ps2 key
 #  endif
 #endif
 
+#if defined(ARDUINO_LOLIN32)
+#  define TFT_MISO 19
+#  define TFT_LED 0
+#  define TFT_SCK 18
+#  define TFT_MOSI 23
+#  define TFT_DC 22
+#  define TFT_RESET 0
+#  define TFT_CS 5
+#  define TFT_GND 0
+#  define TFT_VCC 0
+#  define A1 0
+#  define A2 0
+#  define A3 0
+#  define A4 0
+#  define A5 0
+#  define A6 0
+#  define A7 0
+#define HASNOSD
+#  endif
+
 // set up variables using the SD utility library functions:
+#ifndef HASNOSD
 Sd2Card card;
 SdVolume volume;
 SdFile root;
 File myFile;
+#endif
 bool hasSD = false;
+bool hasWIFI = false;
 
 // Use software SPI on LAZY, else hardware SPI
-#ifdef LAZY_BREADBOARD
+#if defined(LAZY_BREADBOARDTFT) || defined(ARDUINO_LOLIN32)
+#if defined(ARDUINO_LOLIN32)
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC);
+#else
 Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO);
+#endif
 #define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
 #else
 ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
@@ -280,7 +316,8 @@ int getButtonPress(bool raw)
   unsigned int repeatTime=100;
 
   static bool conf=false;
-#ifndef LAZY_BREADBOARD
+#if !defined(ARDUINO_LOLIN32)
+#ifndef LAZY_BREADBOARDBTN
   if (!conf)
   { pinMode(19, OUTPUT); // switch 1, 4 low
     digitalWrite(19, LOW);
@@ -341,6 +378,28 @@ int getButtonPress(bool raw)
     ((!digitalRead(6))<<5) |
     ((!digitalRead(4))<<6) |
     ((!digitalRead(2))<<7);
+#endif
+#endif
+
+#if defined(ARDUINO_LOLIN32)
+    pinMode(33, INPUT_PULLUP); // btn 1: on-off
+    pinMode(25, INPUT_PULLUP); // btn 2: function (map btn 1-6 to nova keys)
+    pinMode(27, INPUT_PULLUP); // btn 3: 1
+    pinMode(12, INPUT_PULLUP); // btn 4: 2
+    pinMode(17, INPUT_PULLUP);  // btn 5: 3
+    pinMode(4, INPUT_PULLUP);  // btn 6: 4
+    pinMode(2, INPUT_PULLUP);  // btn 7: 5
+    pinMode(13, INPUT_PULLUP);  // btn 8: 6
+
+  int currentButtons =
+    ((!digitalRead(33))) |
+    ((!digitalRead(25))<<1) |
+    ((!digitalRead(27))<<2) |
+    ((!digitalRead(12))<<3) |
+    ((!digitalRead(17))<<4) |
+    ((!digitalRead(4))<<5) |
+    ((!digitalRead(2))<<6) |
+    ((!digitalRead(13))<<7);
 #endif
 
   // nothing happened
@@ -479,8 +538,8 @@ int getTouchPress(bool raw)
       tft.drawLine(240, 0, 240, 239, CL(255,255,255));
   
       while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
-      if (x && y) 
-      { //Serial.println(String(x) +" "+String(y)+" "+String(z));
+      if (x && y && z>20) 
+      { 
         x = (x-200)/1800; if (x>1) x=1; if (x<0) x=0;
         y = (y-200)/900; if (y>3) y=3; if (y<0) y=0;
         x=(y+x*4);
@@ -634,7 +693,7 @@ void updateImage()
   { if (keySel<-1) keySel=-1;
 
     // draw background (darken when switch=OFF)
-#ifndef LAZY_BREADBOARD
+#if !defined(LAZY_BREADBOARDTFT) && !defined(ARDUINO_LOLIN32)
     if (novaKey==1) 
     { unsigned short *data = (unsigned short *)malloc(gimp_image.width*gimp_image.height*2);
       for (unsigned int i=0; i<gimp_image.width*gimp_image.height; i++)
@@ -871,6 +930,9 @@ void Serialwrite(int a)
   }
 
   Serial.write(a);
+#ifdef WIFI
+  if (hasWIFI) WIFI.write(a);
+#endif
 
   if (inCursor && a>='0' && a<='9') // collect graphics terminal number
   { val=10*val+a-'0';
@@ -910,7 +972,7 @@ void Serialwrite(int a)
         case 't': 
         case 'T': 
                   int s=1; 
-#ifndef LAZY_BREADBOARD  // difference in libraries ...
+#if !defined(LAZY_BREADBOARDTFT) && !defined(ARDUINO_LOLIN32) // difference in libraries ...
                   s=tft.getTextSize(); 
 #endif
                   tft.setTextSize(vals[0]);
@@ -1575,6 +1637,7 @@ void unload(const unsigned short *p, int eeprom, int base)
     tft.println("** Session does not fit in eeprom; not stored **");
     delay(5000);
   }
+#ifndef HASNOSD
   else if (eeprom && hasSD)
   { unsigned short s=ndiff;
 
@@ -1600,6 +1663,7 @@ void unload(const unsigned short *p, int eeprom, int base)
     tft.setTextSize(1);
     restoreText(true);
   }
+#endif
   else if (eeprom)
   { for (int i=0; i<ndiff; i++)
     { unsigned short s=diffs[i];
@@ -1695,6 +1759,7 @@ int getSessionLength(int id)
 { if (id==basicsession[0]) return sizeof(basicsession)/2;
   if (id==basiccode[0]) return sizeof(basiccode)/2;
   if (id==basicpong[0]) return sizeof(basicpong)/2;
+#ifndef HASNOSD
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1705,6 +1770,7 @@ int getSessionLength(int id)
       if (id==idf) return lenf;
     }
   }
+#endif
   if (id==(EEPROM.read(56)<<8)+EEPROM.read(57)) return (EEPROM.read(38)<<8)+EEPROM.read(39);
   return 0;
 }
@@ -1714,6 +1780,7 @@ int getSessionBase(int id)
 { if (id==basicsession[0]) return basicsession[1];
   if (id==basiccode[0]) return basiccode[1];
   if (id==basicpong[0]) return basicpong[1];
+#ifndef HASNOSD
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1726,6 +1793,7 @@ int getSessionBase(int id)
       if (id==idf) return basef;
     }
   }
+#endif
   if (id==(EEPROM.read(56)<<8)+EEPROM.read(57)) return (EEPROM.read(58)<<8)+EEPROM.read(59);
   return 0;
 }
@@ -1738,6 +1806,7 @@ const unsigned short *getSessionAddress(int id)
   if (id==basicsession[0]) return basicsession;
   if (id==basiccode[0]) return basiccode;
   if (id==basicpong[0]) return basicpong;
+#ifndef HASNOSD
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1756,6 +1825,7 @@ const unsigned short *getSessionAddress(int id)
       myFile.close();
     }
   }
+#endif
   if (id==(EEPROM.read(56)<<8)+EEPROM.read(57))
   { for (int i=0; i<EEPROMWORDS; i++) 
       eepromcopy[i] = (EEPROM.read(56+i*2)<<8)+EEPROM.read(57+i*2);
@@ -1771,6 +1841,7 @@ int getSessionID(String name)
   if (name==".BASICSAMPLE") return basiccode[0];
   if (name==".PONG") return basicpong[0];
   if (name==".BASICPONG") return basicpong[0];
+#ifndef HASNOSD
   if (hasSD && name==".SD")
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1782,6 +1853,7 @@ int getSessionID(String name)
       return idf;
     }
   }
+#endif
   if (name==".EEPROM") return (EEPROM.read(56)<<8)+EEPROM.read(57);
   if (name.toInt()) return name.toInt();
   return -1;
@@ -1792,6 +1864,7 @@ String getSessionName(int id)
 { if (id==basicsession[0] || id==-1) return ".BASICSESSION";
   if (id==basiccode[0]    || id==-2) return ".BASICSAMPLE";
   if (id==basicpong[0]    || id==-3) return ".BASICPONG";
+#ifndef HASNOSD
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1803,6 +1876,7 @@ String getSessionName(int id)
       if (id==idf || id==-4) return ".SD";
     }
   }
+#endif
   if (id==(EEPROM.read(56)<<8)+EEPROM.read(57) || id==-5) return ".EEPROM";
   return "";
 }
@@ -2040,7 +2114,7 @@ int keyboard(String info, String menuString, int ch)
     if (k==2) 
       t = t + text;
     if (k==1) 
-      t = t.remove(t.length()-1);
+      t.remove(t.length()-1);
     if (k==8) 
     { if (text=="\x11") 
         t = previous;
@@ -2206,7 +2280,7 @@ void processButton(int but)
                  reset_all(0);
                  
 
-#ifndef FEATHERWING_TFT_TOUCH
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
                  { analogWrite(14, 100); 
@@ -2223,17 +2297,13 @@ void processButton(int but)
                  { digitalWrite(PS2_VCC, 1); 
                    if (PS2_VCC>24)
                    { digitalWrite(PS2_VCC-1, 1); // kb ON
-                     digitalWrite(PS2_VCC-2, 1); // kb ON
                    }
-                    //digitalWrite(TFT_LED, 1); 
                  }
                  else
                  { digitalWrite(PS2_VCC, 0); 
                    if (PS2_VCC>24)
                    { digitalWrite(PS2_VCC-1, 0); // kb OFF
-                     digitalWrite(PS2_VCC-2, 0); // kb OFF
                    }
-                   //digitalWrite(TFT_LED, 0); 
                  }
 #endif
       
@@ -2256,7 +2326,7 @@ void processButton(int but)
 
                  delay(300); 
 
-#ifndef FEATHERWING_TFT_TOUCH
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
                  // Dim green light when ON
                  if (novaKey==2) 
                    analogWrite(14, 3); 
@@ -2353,6 +2423,13 @@ byte Serialread()
 { if (Serial.available())
     return Serial.read();
   
+#ifdef WIFI
+  if (WIFI.available())
+  { hasWIFI = true;
+    return WIFI.read();
+  }
+#endif
+  
   if (injectSerialText.length())
   { byte b = injectSerialText.charAt(0);
     injectSerialText.remove(0, 1);
@@ -2400,6 +2477,9 @@ void about(void)
   updateImage();
   while(!getButtonPress(true) && !Serial.available() && !ps2kb.available());
   if (Serial.available()) Serial.read();
+#ifdef WIFI
+  if (WIFI.available()) WIFI.read();
+#endif
   if (ps2kb.available()) ps2kb.read();
   restoreText(true);
 }
@@ -2685,7 +2765,8 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', 5);
         unsigned short a = readOct(line, pos1);
         if (pos2>=0) {
-          String t=line.substring(pos2).toLowerCase();
+          String t=line.substring(pos2);
+	  t.toLowerCase();
 
           // shortcuts to frequent routines, must be in memory to work
           if      (t==" .mul"   ) deposit(a, 0x043e); // JMS @3e etc
@@ -2712,7 +2793,8 @@ void processSerial(int count)
           }
 
           else for(int b=0; b<=65535;)
-          { String s = printDisas(b, OCT).toLowerCase();
+          { String s = printDisas(b, OCT);
+	    s.toLowerCase();
             if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
               b+=63; 
             // must be different instruction (all coded in high 10 bits)
@@ -2917,8 +2999,10 @@ void processSerial(int count)
       else if (line.startsWith("dac "))
       { int pos1 = 4;
         unsigned short a = readOct(line, pos1);
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
 #ifdef A14
         analogWrite(A14, a);
+#endif
 #endif
         nextcmd = "dac "+toOct(a+1);
       }
@@ -3102,7 +3186,8 @@ void processSerial(int count)
       // absolute tape loader using data in eeprom; tape data is stored after 16 bytes $$llFILENAME@; where ll is its 16 bits length
       else if (line.startsWith("tape "))
       { int pos1 = 5;
-        String filename = line.substring(pos1, 99).toUpperCase(); // +"@";
+        String filename = line.substring(pos1, 99);
+	filename.toUpperCase(); // +"@";
 
         // absolute tape loader using program data
         if (filename==".BASIC")
@@ -3120,7 +3205,8 @@ void processSerial(int count)
 
       else if (line.startsWith("unloaddiff "))
       { int pos1=11;
-        String filename = line.substring(pos1, 99).toUpperCase();
+        String filename = line.substring(pos1, 99);
+	filename.toUpperCase();
         unloadDiffCode(filename);
       }
 
@@ -3140,7 +3226,8 @@ void processSerial(int count)
 
       else if (line.startsWith("session "))
       { int pos1 = 8;
-        String filename = line.substring(pos1, 99).toUpperCase();
+        String filename = line.substring(pos1, 99);
+	filename.toUpperCase();
                 
         if (filename=="LIST")
         { for (int i=1; i<100; i++)
@@ -3181,7 +3268,7 @@ void setup() {
 // on the long teensy boards, the TFT must overlap pins 33-39 (2 pin stick over), use pin 32 for LED, 36 for reset
 // all other pins are wired to the orginals, so they are set to input for safety
 
-#if (defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)) && !defined(LAZY_BREADBOARD)
+#if (defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)) && !defined(LAZY_BREADBOARDTFT)
                         // tft 9 wired to MISO (pin 12)
   pinMode(32, OUTPUT);
   digitalWrite(32, 1);  // tft 8 through 470 ohm resistor (LED)
@@ -3196,7 +3283,7 @@ void setup() {
   delay(100);
 #endif
 
-#ifdef LAZY_BREADBOARD
+#ifdef LAZY_BREADBOARDTFT
   pinMode(TFT_GND, OUTPUT);
   digitalWrite(TFT_GND, 0);
   pinMode(TFT_VCC, OUTPUT);
@@ -3216,12 +3303,16 @@ void setup() {
   if (PS2_VCC>24)
   { pinMode(PS2_VCC-1, OUTPUT);
     digitalWrite(PS2_VCC-1, 1); // kb ON
-    pinMode(PS2_VCC-2, OUTPUT);
-    digitalWrite(PS2_VCC-2, 1); // kb ON
   }
 #endif
 
+#ifdef FEATHERWING_TFT_TOUCH
   pinMode(ONOFFSLIDER, INPUT_PULLUP); // switch
+#endif
+
+#ifdef ARDUINO_LOLIN32
+  EEPROM.begin(2048); // Note: somehow initialising EEPROM 1st time takes forever; check GUI eeprom size setting
+#endif
 
 #ifdef FEATHERWING_TFT_TOUCH
   if (!touch.begin())
@@ -3263,7 +3354,7 @@ void setup() {
 // the default value is 30Mhz, but most ILI9341 displays
 // can handle at least 60Mhz and as much as 100Mhz
   tft.begin();
-#ifndef LAZY_BREADBOARD
+#if !defined(LAZY_BREADBOARDTFT) && !defined(ARDUINO_LOLIN32)
   tft.setClock(75000000);
   tft.setRotation(1);
 #else
@@ -3271,11 +3362,14 @@ void setup() {
 #endif
   tft.fillScreen(ILI9341_BLACK);
 
-  Serial.begin(9600);
+  Serial.begin(115200);
+#ifdef WIFI
+  WIFI.begin(115200);
+#endif
   
   Serial.println("Teensy Nova 1210 simulator!"); 
 
-#ifndef FEATHERWING_TFT_TOUCH
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
   pinMode(14, OUTPUT); // red/green led, pin controlled analog
   pinMode(15, OUTPUT); // red/green led, pin controlled digital to support TEENSY35
 #endif
@@ -3314,6 +3408,13 @@ void loop(void) {
   { processSerial(count);
     //if (SerialIO) return;
   }
+#ifdef WIFI
+  else if ((count=WIFI.available()))
+  { hasWIFI = true;
+    processSerial(count);
+    if (SerialIO) return;
+  }
+#endif
 
   // Button presses?
   a=getButtonPress(false);
@@ -3359,7 +3460,7 @@ void loop(void) {
   }
 #endif
 
-#ifdef TFT_LED
+#ifdef FEATHERWING_TFT_TOUCH
   digitalWrite(TFT_LED, digitalRead(ONOFFSLIDER));
 #endif
 
