@@ -70,7 +70,13 @@ Marcel van Herk, 10 September 2020 - Centralized most pin defines; added ps2 key
 Marcel van Herk, 16 September 2020 - Added WIFI through WifiModem on Serial4 or Serial8, set 115200 baud and "do not Show"
 Marcel van Herk, 26 October 2020   - Split LAZY_BREADBOARD into LAZY_BREADBOARDBTN (vertical vs horizontal buttons) 
                                      and LAZY_BREADBOARDTFT (TFT overlaps top right pins of large teensy); HASNOSD flag
-				     Disabled ONOFFSLIDER for non FEATHERWING_TFT_TOUCH
+                                     Disabled ONOFFSLIDER for non FEATHERWING_TFT_TOUCH
+Marcel van Herk, 14 March 2021     - Also run monitor from WIFI
+Marcel van Herk, 25 March 2021     - Added HALT-instruction based function calls I use on real NOVA
+Marcel van Herk, 2 April 2021      - Avoid redraw of unchanged lights and buttons
+Marcel van Herk, 4 April 2021      - Refactored configuration; added PICO mode; works best with updated ILI9431 & SPI libraries
+                                   - PICO assumes/shows 4 buttons, although inputs for other 4 are provided
+                                   - Tested with Teensy4.0, Teensy4.1, RPPico, Featherwing, Teensy3.5
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -78,11 +84,12 @@ Marcel van Herk, 26 October 2020   - Split LAZY_BREADBOARD into LAZY_BREADBOARDB
 
 // select breadboard type or Featherwing TFT board (define none or one)
 //#define FEATHERWING_TFT_TOUCH
-#define LAZY_BREADBOARDTFT
+//#define LAZY_BREADBOARDTFT
 //#define LAZY_BREADBOARDBTN
+#define PICO
 
 #include "SPI.h"
-#if defined(LAZY_BREADBOARDTFT) || defined(ARDUINO_LOLIN32)
+#if defined(LAZY_BREADBOARDTFT) || defined(ARDUINO_LOLIN32) || defined(PICO)
 #include "Adafruit_ILI9341.h"
 #else
 #include "ILI9341_t3.h"
@@ -92,10 +99,32 @@ Marcel van Herk, 26 October 2020   - Split LAZY_BREADBOARD into LAZY_BREADBOARDB
 #ifdef FEATHERWING_TFT_TOUCH
 #include <Adafruit_STMPE610.h>
 #endif
-#include <SD.h>
+
+#ifdef PICO
+#  define TFT_MISO 16
+#  define TFT_SCK 18
+#  define TFT_MOSI 19
+#  define TFT_DC 20
+#  define TFT_CS 17
+#  define A4 0
+#  define A5 0
+#  define A6 0
+#  define A7 0
+#  ifndef BUTTON1
+#    define BUTTON1 26
+#    define BUTTON2 13 // unused
+#    define BUTTON3 12 // unused
+#    define BUTTON4 11 // unused
+#    define BUTTON5 10 // unused
+#    define BUTTONGND4 9
+#    define BUTTON6 6
+#    define BUTTON7 3
+#    define BUTTONGND5 2
+#    define BUTTON8 0
+#  endif
+#endif
 
 #ifdef LAZY_BREADBOARDTFT
-#  define SD_CS BUILTIN_SDCARD
 #  define TFT_MISO 24
 #  define TFT_LED 25
 #  define TFT_SCK 26
@@ -105,38 +134,43 @@ Marcel van Herk, 26 October 2020   - Split LAZY_BREADBOARD into LAZY_BREADBOARDB
 #  define TFT_CS 30
 #  define TFT_GND 31
 #  define TFT_VCC 32
+#  define SD_CS BUILTIN_SDCARD
 #  define ONOFFSLIDER 5
 #  define PS2_GND 39
 #  define PS2_CLK 38
 #  define PS2_DATA 37
+#ifdef ARDUINO_TEENSY41
 #  define WIFI Serial8
+#endif
 #  define PS2_VCC 36
-#else
-#  ifdef FEATHERWING_TFT_TOUCH
-#    define SD_CS 8
-#    define TOUCH_CS 3
-#    define TFT_CS 4
-#    define TFT_DC 10
-#    define TFT_LED 9
-#    define PS2_CLK 1
-#    define PS2_DATA 0
-#    define PS2_VCC 14
-#    define PWRBUTTON 15
-#    define ONOFFSLIDER 5
-#    define WIFI Serial4
-     // free pins a2=16, a3=17, a6=20, a14=on/off
-#  else
-#    define TFT_CS 10
-#    define TFT_DC 9
-#    define ONOFFSLIDER 2
-#    if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
-#      define SD_CS BUILTIN_SDCARD
-#      define TFT_LED 32
-#      define PS2_GND 26
-#      define PS2_CLK 25
-#      define PS2_DATA 24
-#    endif
+#endif
+
+#ifdef LAZY_BREADBOARDBTN
+#  ifndef BUTTON1
+#    define BUTTON1 17
+#    define BUTTON2 19
+#    define BUTTON3 21
+#    define BUTTON4 23
+#    define BUTTON5 8
+#    define BUTTON6 6
+#    define BUTTON7 4
+#    define BUTTON8 2
 #  endif
+#endif
+
+#ifdef FEATHERWING_TFT_TOUCH
+#  define TOUCH_CS 3
+#  define TFT_CS 4
+#  define TFT_DC 10
+#  define TFT_LED 9
+#  define SD_CS 8
+#  define PS2_CLK 1
+#  define PS2_DATA 0
+#  define PS2_VCC 14
+#  define PWRBUTTON 15
+#  define ONOFFSLIDER 5
+#  define WIFI Serial4
+   // free pins a2=16, a3=17, a6=20, a14=on/off
 #endif
 
 #if defined(ARDUINO_LOLIN32)
@@ -156,36 +190,83 @@ Marcel van Herk, 26 October 2020   - Split LAZY_BREADBOARD into LAZY_BREADBOARDB
 #  define A5 0
 #  define A6 0
 #  define A7 0
-#define HASNOSD
+#  ifndef BUTTON1
+#    define BUTTON1 33
+#    define BUTTON2 25
+#    define BUTTON3 27
+#    define BUTTON4 12
+#    define BUTTON5 17
+#    define BUTTON6 4
+#    define BUTTON7 2
+#    define BUTTON8 13
 #  endif
+#endif
+
+// default Teensy layout
+#ifndef TFT_CS
+#  define TFT_CS 10
+#  define TFT_DC 9
+#  define ONOFFSLIDER 2
+#  if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
+#    define SD_CS BUILTIN_SDCARD
+#    define TFT_LED 32
+#    define PS2_GND 26
+#    define PS2_CLK 25
+#    define PS2_DATA 24
+#  endif
+#endif
+#ifndef BUTTON1
+#  define BUTTONGND1 3
+#  define BUTTONGND2 4
+#  define BUTTONGND3 5
+#  define BUTTONGND4 19
+#  define BUTTONGND5 20
+#  define BUTTON1 16
+#  define BUTTON2 18
+#  define BUTTON3 23
+#  define BUTTON4 22
+#  define BUTTON5 8
+#  define BUTTON6 7
+#  define BUTTON7 1
+#  define BUTTON8 0
+#endif
 
 // set up variables using the SD utility library functions:
-#ifndef HASNOSD
-Sd2Card card;
-SdVolume volume;
-SdFile root;
-File myFile;
+#ifdef SD_CS
+# include <SD.h>
+  Sd2Card card;
+  SdVolume volume;
+  SdFile root;
+  File myFile;
 #endif
+
+#ifdef TOUCH_CS
+Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
+#endif
+
+#ifndef CL // depends on inclusion of ILI9341_t3.h
+#define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
+#define writeRect(a, b, c, d, e) drawRGBBitmap(a, b, e, c, d) 
+#define USEADAFRUIT
+#endif
+
+#if defined(PICO)
+  SPIClassRP2040 spi00 = SPIClassRP2040(spi0, TFT_MOSI, TFT_CS, TFT_SCK, TFT_MISO);
+  Adafruit_ILI9341 tft = Adafruit_ILI9341(&spi00, TFT_DC);
+  //Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, -1, TFT_MISO); // test SW SPI
+#elif defined(USEADAFRUIT)
+  Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO);
+  //Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC); //, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO); // HW SPI, requires extra wires
+#elif defined(FEATHERWING_TFT_TOUCH)
+  ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
+#else
+  ILI9341_t3 tft = ILI9341_t3(10, 9);
+#endif
+
 bool hasSD = false;
 bool hasWIFI = false;
 
-// Use software SPI on LAZY, else hardware SPI
-#if defined(LAZY_BREADBOARDTFT) || defined(ARDUINO_LOLIN32)
-#if defined(ARDUINO_LOLIN32)
-Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC);
-#else
-Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO);
-#endif
-#define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
-#else
-ILI9341_t3 tft = ILI9341_t3(TFT_CS, TFT_DC);
-#endif
-
 PS2Keyboard ps2kb;
-
-#ifdef FEATHERWING_TFT_TOUCH
-Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
-#endif
 
 #define MEMSIZE 32768
 
@@ -194,10 +275,19 @@ Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
 #define LP 256
 #define AR 65536
 int numButtons=8;
-static int keyBank=2;
 
-#if true
+#ifdef PICO
+static int keyBank=0, defaultKeyBank=0;
+int keys[] =                                                                          // no bank switching, no help
+{ 25*LP+49, 25,  9*LP+10, 11*LP+12,    AR+18, 20*LP+19, 21*LP+24, 23*LP+24      // processor control (some auto repeat)
+  //cls+pwr                                    str+PL    esc+menu  speed+menu
+};
+String items[]=
+{ " Processor control and menu"
+};
+#elif true
 // 3 banks AC and memory buttons push long for alternate function
+static int keyBank=2, defaultKeyBank=2;
 int keys[] =                                                                            // 49=power, 48=bank, 25=clear screen
 { 25*LP+49, 26*LP+48, 41*LP+31, 42*LP+32, 43*LP+33, 44*LP+34, 45*LP+35, 46*LP+36,       // 31=36 = data; 41-46 = data clear
   25*LP+49, 26*LP+48,  1*LP+ 2,  3*LP+ 4,  5*LP+ 6,  7*LP+ 8, AR+13*LP+14, AR+16*LP+15, // 1-8 = ac keys 13-16 = deposit/examine (long and auto repeat)
@@ -210,6 +300,7 @@ String items[]=
 };
 #else
 // older 4 bank method
+static int keyBank=0, defaultKeyBank=0;
 int keys[] =                                                                            // 49=power, 48=bank, 25=clear screen
 { 25*LP+49, 26*LP+48, 41*LP+31, 42*LP+32, 43*LP+33, 44*LP+34, 45*LP+35, 46*LP+36,       // 31=36 = data; 41-46 = data clear
   25*LP+49, 26*LP+48,  1*LP+ 2,  3*LP+ 4,  5*LP+ 6,  7*LP+ 8, AR+13*LP+14, AR+16*LP+15, // 1-8 = ac keys 13-16 = deposit/examine (long and auto repeat)
@@ -292,7 +383,7 @@ bool isKeyActive(int key)
 { for (int i=0; i<numButtons; i++)
   { int k = keys[keyBank*numButtons+i];
     if ((k&255)==key) return true;
-        if (((k>>8)&255)==key) return true;
+    if (((k>>8)&255)==key) return true;
   }
   return false;
 }
@@ -316,90 +407,57 @@ int getButtonPress(bool raw)
   unsigned int repeatTime=100;
 
   static bool conf=false;
-#if !defined(ARDUINO_LOLIN32)
-#ifndef LAZY_BREADBOARDBTN
   if (!conf)
-  { pinMode(19, OUTPUT); // switch 1, 4 low
-    digitalWrite(19, LOW);
-    pinMode(20, OUTPUT); // switch 3 low
-    digitalWrite(20, LOW);
-    pinMode(3, OUTPUT);  // switch 8 low
-    digitalWrite(3, LOW);
-    pinMode(4, OUTPUT);  // switch 7,6 low
-    digitalWrite(4, LOW);
-    pinMode(5, OUTPUT);  // switch 5 low
-    digitalWrite(5, LOW);
-
-    pinMode(16, INPUT_PULLUP); // btn 1: on-off
-    pinMode(18, INPUT_PULLUP); // btn 2: function (map btn 1-6 to nova keys)
-    pinMode(23, INPUT_PULLUP); // btn 3: 1
-    pinMode(22, INPUT_PULLUP); // btn 4: 2
-    pinMode(8, INPUT_PULLUP);  // btn 5: 3
-    pinMode(7, INPUT_PULLUP);  // btn 6: 4
-    pinMode(1, INPUT_PULLUP);  // btn 7: 5
-    pinMode(0, INPUT_PULLUP);  // btn 8: 6
+  { 
+#ifdef BUTTONGND1
+    pinMode(BUTTONGND1, OUTPUT); // switch 1, 4 low
+    digitalWrite(BUTTONGND1, LOW);
+#endif
+#ifdef BUTTONGND2
+    pinMode(BUTTONGND2, OUTPUT); // switch 1, 4 low
+    digitalWrite(BUTTONGND2, LOW);
+#endif
+#ifdef BUTTONGND3
+    pinMode(BUTTONGND3, OUTPUT); // switch 1, 4 low
+    digitalWrite(BUTTONGND3, LOW);
+#endif
+#ifdef BUTTONGND4
+    pinMode(BUTTONGND4, OUTPUT); // switch 1, 4 low
+    digitalWrite(BUTTONGND4, LOW);
+#endif
+#ifdef BUTTONGND5
+    pinMode(BUTTONGND5, OUTPUT); // switch 1, 4 low
+    digitalWrite(BUTTONGND5, LOW);
+#endif
+    
+#ifdef BUTTON1
+    pinMode(BUTTON1, INPUT_PULLUP); // btn 1: on-off
+    pinMode(BUTTON2, INPUT_PULLUP); // btn 2: function (map btn 1-6 to nova keys)
+    pinMode(BUTTON3, INPUT_PULLUP); // btn 3: 1
+    pinMode(BUTTON4, INPUT_PULLUP); // btn 4: 2
+    pinMode(BUTTON5, INPUT_PULLUP);  // btn 5: 3
+    pinMode(BUTTON6, INPUT_PULLUP);  // btn 6: 4
+    pinMode(BUTTON7, INPUT_PULLUP);  // btn 7: 5
+    pinMode(BUTTON8, INPUT_PULLUP);  // btn 8: 6
+#endif
     conf=true;
     lastChange = millis();
     delay(10);
     return 0;
   }
 
+#ifdef BUTTON1
   int currentButtons =
-    ((!digitalRead(16))) |
-    ((!digitalRead(18))<<1) |
-    ((!digitalRead(23))<<2) |
-    ((!digitalRead(22))<<3) |
-    ((!digitalRead(8))<<4) |
-    ((!digitalRead(7))<<5) |
-    ((!digitalRead(1))<<6) |
-    ((!digitalRead(0))<<7);
+    ((!digitalRead(BUTTON1))) |
+    ((!digitalRead(BUTTON2))<<1) |
+    ((!digitalRead(BUTTON3))<<2) |
+    ((!digitalRead(BUTTON4))<<3) |
+    ((!digitalRead(BUTTON5))<<4) |
+    ((!digitalRead(BUTTON6))<<5) |
+    ((!digitalRead(BUTTON7))<<6) |
+    ((!digitalRead(BUTTON8))<<7);
 #else
-  if (!conf)
-  { pinMode(17, INPUT_PULLUP); // btn 1: on-off
-    pinMode(19, INPUT_PULLUP); // btn 2: function (map btn 1-6 to nova keys)
-    pinMode(21, INPUT_PULLUP); // btn 3: 1
-    pinMode(23, INPUT_PULLUP); // btn 4: 2
-    pinMode(8, INPUT_PULLUP);  // btn 5: 3
-    pinMode(6, INPUT_PULLUP);  // btn 6: 4
-    pinMode(4, INPUT_PULLUP);  // btn 7: 5
-    pinMode(2, INPUT_PULLUP);  // btn 8: 6
-    conf=true;
-    lastChange = millis();
-    delay(10);
-    return 0;
-  }
-
-  int currentButtons =
-    ((!digitalRead(17))) |
-    ((!digitalRead(19))<<1) |
-    ((!digitalRead(21))<<2) |
-    ((!digitalRead(23))<<3) |
-    ((!digitalRead(8))<<4) |
-    ((!digitalRead(6))<<5) |
-    ((!digitalRead(4))<<6) |
-    ((!digitalRead(2))<<7);
-#endif
-#endif
-
-#if defined(ARDUINO_LOLIN32)
-    pinMode(33, INPUT_PULLUP); // btn 1: on-off
-    pinMode(25, INPUT_PULLUP); // btn 2: function (map btn 1-6 to nova keys)
-    pinMode(27, INPUT_PULLUP); // btn 3: 1
-    pinMode(12, INPUT_PULLUP); // btn 4: 2
-    pinMode(17, INPUT_PULLUP);  // btn 5: 3
-    pinMode(4, INPUT_PULLUP);  // btn 6: 4
-    pinMode(2, INPUT_PULLUP);  // btn 7: 5
-    pinMode(13, INPUT_PULLUP);  // btn 8: 6
-
-  int currentButtons =
-    ((!digitalRead(33))) |
-    ((!digitalRead(25))<<1) |
-    ((!digitalRead(27))<<2) |
-    ((!digitalRead(12))<<3) |
-    ((!digitalRead(17))<<4) |
-    ((!digitalRead(4))<<5) |
-    ((!digitalRead(2))<<6) |
-    ((!digitalRead(13))<<7);
+  int currentButtons = 0;
 #endif
 
   // nothing happened
@@ -437,20 +495,20 @@ int getButtonPress(bool raw)
     if (currentButtons==0)
     { stat=0; // no button pressed
       genKey=true;
-          kinfo=lastKey;
+      kinfo=lastKey;
     }
     else
     { stat=1; // button just pressed
       kinfo = kinfo & 255;
       autoRepeat=0x7fffffff;
-          if (longpress)
-          { lastKey=kinfo;
+      if (longpress)
+      { lastKey=kinfo;
         return 0;
-          }
-          else
-          { genKey=true;
+      }
+      else
+      { genKey=true;
         lastKey=0;
-          }
+      }
     }      
   }
 
@@ -680,6 +738,10 @@ void updateImage()
   static int oldsw=-1;
   static int oldsk=-1;
   static int oldks=-2;
+  static int oldlights=-1;
+  static int olddatasw=-1;
+  static int oldaddress=-1;
+  static int olddata=-1;
   int vshift=240-93;
 
   // for testing
@@ -693,7 +755,6 @@ void updateImage()
   { if (keySel<-1) keySel=-1;
 
     // draw background (darken when switch=OFF)
-#if !defined(LAZY_BREADBOARDTFT) && !defined(ARDUINO_LOLIN32)
     if (novaKey==1) 
     { unsigned short *data = (unsigned short *)malloc(gimp_image.width*gimp_image.height*2);
       for (unsigned int i=0; i<gimp_image.width*gimp_image.height; i++)
@@ -707,21 +768,6 @@ void updateImage()
       else
         tft.writeRect(0, vshift, gimp_image.width, gimp_image.height, (uint16_t*)(gimp_image.pixel_data));
     }
-#else // difference in libraries ....
-    if (novaKey==1) 
-    { unsigned short *data = (unsigned short *)malloc(gimp_image.width*gimp_image.height*2);
-      for (unsigned int i=0; i<gimp_image.width*gimp_image.height; i++)
-        data[i] = (((uint16_t*)(gimp_image.pixel_data))[i]&0b1110011110011100)>>2;
-      tft.drawRGBBitmap(0, vshift, data, gimp_image.width, gimp_image.height);
-      free(data);
-    }
-    else
-    { if (sw!=oldsw && sk==oldsk && keySel==oldks) // only draw switch area to avoid blinking
-        tft.drawRGBBitmap(0, vshift+49, (uint16_t*)(gimp_image.pixel_data)+49*gimp_image.width, gimp_image.width, gimp_image.height);
-      else
-        tft.drawRGBBitmap(0, vshift, (uint16_t*)(gimp_image.pixel_data), gimp_image.width, gimp_image.height);
-    }
-#endif
 
     // draw toggle switches at rest
     for (int i=0; i<10; i++)
@@ -765,45 +811,57 @@ void updateImage()
 
   // draw address lights
   for (int i=0; i<15; i++) 
-  { if (((novaAddress<<i)&0x4000)==0 || pwroff)
-      tft.fillCircle(97+i*11.8, vshift+11, 2, lampoff);
-    else
-      tft.fillCircle(97+i*11.8, vshift+11, 2, lampon);
+  { if (((novaAddress<<i)&0x4000) != (((oldaddress<<i)&0x4000)))
+    { if (((novaAddress<<i)&0x4000)==0 || pwroff)
+        tft.fillCircle(97+i*11.8, vshift+11, 2, lampoff);
+      else
+        tft.fillCircle(97+i*11.8, vshift+11, 2, lampon);
+    }
   }
+  oldaddress=novaAddress;
 
   // draw carry and data lights
   int dc = novaData;
   if (novaCarry) dc += 0x10000;
   for (int i=0; i<17; i++)
-  { if (((dc<<i)&0x10000)==0 || pwroff)
-      tft.fillCircle(74+i*11.8, vshift+24, 2, lampoff);
-    else
-      tft.fillCircle(74+i*11.8, vshift+24, 2, lampon);
+  { if (((dc<<i)&0x10000) != (((olddata<<i)&0x10000)))
+    { if (((dc<<i)&0x10000)==0 || pwroff)
+        tft.fillCircle(74+i*11.8, vshift+24, 2, lampoff);
+      else
+        tft.fillCircle(74+i*11.8, vshift+24, 2, lampon);
+    }
   }
+  olddata = dc;
 
   // ion and run lights
-  for (int i=0; i<2; i++) 
-  { if (((novaLights>>i)&1)==0 || pwroff)
-      tft.fillCircle(274+i*12.5, vshift+12, 2, lampoff);
-    else
-      tft.fillCircle(274+i*12.5, vshift+12, 2, lampon);
-  }
+  if (oldlights!=novaLights)
+  { for (int i=0; i<2; i++) 
+    { if (((novaLights>>i)&1)==0 || pwroff)
+        tft.fillCircle(274+i*12.5, vshift+12, 2, lampoff);
+      else
+        tft.fillCircle(274+i*12.5, vshift+12, 2, lampon);
+    }
 
-  // fetch, defer, exec lights
-  for (int i=0; i<3; i++) 
-  { if (((novaLights>>i)&4)==0 || pwroff)
-      tft.fillCircle(274+i*12.5, vshift+25, 2, lampoff);
-    else
-      tft.fillCircle(274+i*12.5, vshift+25, 2, lampon);
+    // fetch, defer, exec lights
+    for (int i=0; i<3; i++) 
+    { if (((novaLights>>i)&4)==0 || pwroff)
+        tft.fillCircle(274+i*12.5, vshift+25, 2, lampoff);
+      else
+        tft.fillCircle(274+i*12.5, vshift+25, 2, lampon);
+    }
   }
+  oldlights = novaLights;
 
   // draw data switches (simplified)
-  for (int i=0; i<16; i++) 
-  {  if (((novaSwitches<<i)&0x8000)==0)
-      tft.fillCircle(85+i*11.8, vshift+40, 3, (pwroff||!isKeyActive(31))?CL(16,16,16):CL(32, 32, 32));
-    else
-      tft.fillCircle(85+i*11.8, vshift+40, 3, (pwroff||!isKeyActive(31))?CL(64,64,64):CL(128,128,128));
+  if (olddatasw!=novaSwitches)
+  { for (int i=0; i<16; i++) 
+    {  if (((novaSwitches<<i)&0x8000)==0)
+        tft.fillCircle(85+i*11.8, vshift+40, 3, (pwroff||!isKeyActive(31))?CL(16,16,16):CL(32, 32, 32));
+      else
+       tft.fillCircle(85+i*11.8, vshift+40, 3, (pwroff||!isKeyActive(31))?CL(64,64,64):CL(128,128,128));
+    }
   }
+  olddatasw = novaSwitches;
 }
 
 String makespc(int n)
@@ -815,6 +873,7 @@ String makespc(int n)
 // Show help screen fitting to selected keyBank
 int helpScreen=-1;
 void showHelp() {
+  int l;
   tft.fillScreen(ILI9341_BLACK);
   tft.setTextColor(CL(192,192,64));
   tft.setTextSize(1);
@@ -841,17 +900,28 @@ void showHelp() {
 #endif
   tft.println("");
   tft.println("");
-  int l=keyHelp(1).length();
+#ifndef PICO
+  l=keyHelp(1).length();
   tft.println(makespc(16-l)+keyHelp(1)+makespc(offs)+"   o");
+#else
+  tft.println("");
+  tft.println("");
+  tft.println("");
+  tft.println("");
+#endif
   l=keyHelp(0).length();
   tft.println(makespc(16-l)+keyHelp(0)+makespc(offs/2)+" o");
   tft.setTextColor(CL(192,192,64));
+#ifndef PICO
   tft.println(makespc(31-offs)+"o   "+makespc(offs)+keyHelp(4));
+#endif
   tft.println(makespc(31-offs/2)+"  o "+makespc(offs/2)+keyHelp(5));
+#ifndef PICO
   l=keyHelp(3).length();
   tft.println(makespc(16-l)+keyHelp(3)+makespc(offs)+"   o");
   l=keyHelp(2).length();
   tft.println(makespc(16-l)+keyHelp(2)+makespc(offs/2)+" o");
+#endif
   tft.println(makespc(31-offs)+"o   "+makespc(offs)+keyHelp(6));
   tft.println(makespc(31-offs/2)+"  o "+makespc(offs/2)+keyHelp(7));
   tft.println("");
@@ -861,7 +931,11 @@ void showHelp() {
   tft.println(makespc(23-(l>>1))+"FUNC "+items[keyBank]);
   tft.println("");
   tft.setTextColor(CL(192,192,64));
+#ifndef PICO
   tft.print("Teensy Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
+#else
+  tft.print("RPPico Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
+#endif
 }
 
 // monitor display
@@ -972,7 +1046,7 @@ void Serialwrite(int a)
         case 't': 
         case 'T': 
                   int s=1; 
-#if !defined(LAZY_BREADBOARDTFT) && !defined(ARDUINO_LOLIN32) // difference in libraries ...
+#ifndef USEADAFRUIT
                   s=tft.getTextSize(); 
 #endif
                   tft.setTextSize(vals[0]);
@@ -989,19 +1063,19 @@ void Serialwrite(int a)
   if (a==10) 
   { textCol=0;
     textLine++;
-        if (textLine>=18) {scroll(); textLine=17;}
-        inString=false;
-        inControl=false;
-        inCursor=0;
+    if (textLine>=18) {scroll(); textLine=17;}
+    inString=false;
+    inControl=false;
+    inCursor=0;
   }
   else if (a==13) 
   { 
   }
   else if (a==12) 
   { clearText(false);
-        inString=false;
-        inControl=false;
-        inCursor=0;
+    inString=false;
+    inControl=false;
+    inCursor=0;
   }
   else
   { if (inControl)
@@ -1130,7 +1204,26 @@ void continueNova(void)
   return;
 }
 
-// execute N instructions
+#define HALT       063077
+
+// System calls (these all are functional HALT instructions, interpreted by Arduino program on real Nova)
+// Unused in Teensy Nova simulator
+#define INFO       077377 // show debug information on LCD
+#define PUTC       077277 // output character to LCD and serial
+#define GETC       077177 // get character from serial (/ mode) or keypad (9-5 mode)
+#define READBLOCK  077077 // read 64 word block A0 from device (EEPROM) to address A2
+#define WRITEBLOCK 073377 // write 64 word block A0 to device (EEPROM) from address A2
+#define WRITELED   073277 // A0 bit 0 sets Arduino LED
+#define MESSAGE    073177 // Write text string with %0..%3 substituted for AC0..3
+#define GPIO       073077 // High bits define data direction (O=out), low bits value
+//#define SKIPBUSYZ  (MOV(3,3)+NOLOAD+SKP) // Always skip
+#define SKIPDONE   067377 // skip when character available
+#define DELAY      067277 // Delay A0 ms, showing A1 on lights
+#define ADC        067177 // Read A0 from teensy
+// 6 are open 06[3,7][1-3]77 except 063077; maybe add 
+// HWMUL, HWDIV, DEVICESEL, SKIPBUSYZ (always skip)
+
+// execute N instruction
 void simulateNova(int N)
 { novaLights = (
       (novaRunning?1:0)|
@@ -1140,7 +1233,7 @@ void simulateNova(int N)
       (0));
   novaCarry = (NovaC&CBIT?1:0);
   saved_PC=NovaPC;
-  sim_instr(N);
+  int stat = sim_instr(N);
   NovaPC=saved_PC;
   novaAddress = saved_PC;
   novaData = examine(saved_PC);
@@ -1151,6 +1244,130 @@ void simulateNova(int N)
       (novaRunning?8:0)|
       (0));
   novaCarry = (NovaC&CBIT?1:0);
+
+  if (stat==2) // HALT
+  { int haltAddress = saved_PC-1;
+    int haltInstruction = examine(haltAddress);
+    int haltA0          = examineAC(0);
+
+    //if (kbmode==3) haltInstruction=0; // allow key 9 to stop running
+
+    if (haltInstruction==HALT)
+    { Serial.println("HALT at address: "+toOct(haltAddress));
+      Serial.print(">");
+      stopNova();
+      SerialIO=false;
+      return; // Normal halt: nova ready for input
+    }    
+    else if (haltInstruction==INFO)
+    { //lcdPrintDebug();
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==PUTC) // write character
+    { byte b=haltA0&255;
+      Serial.write(b);
+      //putLCD(b);
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==MESSAGE) // write character string from address in A2
+    { int a = examineAC(2);
+      bool flag=false;
+      for (int i=0; i<40; i++)
+      { unsigned short s=examine(a+i);
+        unsigned short s2=examine(a+i+1);
+        byte b = s>>8;
+        if (b==0) break;
+        if (!flag)
+        { if (b=='%') { Serial.print(String((short)examineAC(s&3))); flag=true; }
+          else Serial.write(b);
+          //putLCD(b);
+        }
+        else
+          flag=false;
+        b = s&255;
+        if (b==0) break;
+        if (!flag)
+        { if (b=='%') { Serial.print(String((short)examineAC((s2>>8)&3))); flag=true; }
+          else Serial.write(b);
+          //putLCD(b);
+        }
+        else
+          flag=false;
+      }
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==WRITELED)
+    { 
+#ifndef TEENSY
+      digitalWrite(6, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
+      digitalWrite(A2, 1);
+      digitalWrite(A3, 1);
+      digitalWrite(A4, 1);
+      digitalWrite(A5, 1);
+#endif
+      digitalWrite(13, (haltA0&1)!=0);
+#ifdef TEENSY
+      digitalWrite(12, (haltA0&2)!=0);
+      digitalWrite(11, (haltA0&4)!=0);
+      analogWrite(A14, haltA0>>4);
+#endif
+#ifndef TEENSY
+      delay(50); // must be shorter than 100 ms above!
+      digitalWrite(13, 0);
+#endif
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==READBLOCK) // stored BIGENDIAN in eeprom
+    { unsigned int A2=examineAC(2);
+      //gpio(1);
+      //readBlockfromEEPROM(haltA0, A2);
+      depositAC(0, haltA0+1);
+      depositAC(2, A2+64);
+      //gpio(0);
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
+    { unsigned int A2=examineAC(2);
+      //gpio(4);
+      //writeBlocktoEEPROM(haltA0, A2);
+      //gpio(0);
+      depositAC(0, haltA0+1);
+      depositAC(2, A2+64);
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==GPIO)     // GPIO through MCP20008
+    { //gpio(haltA0);
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==DELAY)   // delay on arduino
+    { examineAC(1); // show ac1 on lights
+      delay(haltA0);
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==ADC)   // adc on teensy
+    { 
+#ifdef TEENSY
+      pinMode(A0, INPUT);
+      depositAC(0, analogRead(A0));
+#else
+      pinMode(A1, INPUT);
+      depositAC(0, analogRead(A1));
+#endif
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==GETC)
+    { //break; // handled in serial and keyboard code
+    }
+  }
 }
 
 // execute one instruction
@@ -1321,25 +1538,6 @@ String printIOT(unsigned int tr, unsigned int sk) {
   return s;
 }
 
-#define HALT       063077
-
-// System calls (these all are functional HALT instructions, interpreted by Arduino program on real Nova)
-// Unused in Teensy Nova simulator
-#define INFO       077377 // show debug information on LCD
-#define PUTC       077277 // output character to LCD and serial
-#define GETC       077177 // get character from serial (/ mode) or keypad (9-5 mode)
-#define READBLOCK  077077 // read 64 word block A0 from device (EEPROM) to address A2
-#define WRITEBLOCK 073377 // write 64 word block A0 to device (EEPROM) from address A2
-#define WRITELED   073277 // A0 bit 0 sets Arduino LED
-#define MESSAGE    073177 // Write text string with %0..%3 substituted for AC0..3
-#define GPIO       073077 // High bits define data direction (O=out), low bits value
-//#define SKIPBUSYZ  (MOV(3,3)+NOLOAD+SKP) // Always skip
-#define SKIPDONE   067377 // skip when character available
-#define DELAY      067277 // Delay A0 ms, showing A1 on lights
-#define ADC        067177 // Read A0 from teensy
-// 6 are open 06[3,7][1-3]77 except 063077; maybe add 
-// HWMUL, HWDIV, DEVICESEL, SKIPBUSYZ (always skip)
-
 // Disassemble entire instruction and return
 String printDisas(unsigned int v, int octalmode) {
   String s(" ");
@@ -1482,6 +1680,78 @@ void serialDebug(int mode) {
   examine(pc);
 }
 
+// mini debugger display on serial interface
+#ifdef WIFI
+void WIFIDebug(int mode) {
+  unsigned int pc = NovaPC;
+  unsigned int carry = NovaC!=0;
+  unsigned int in = NovaMem[NovaPC], a0, a1, a2=0, a3=0;
+  a0=examineAC(0);
+  a1=examineAC(1);
+  a2=examineAC(2);
+  a3=examineAC(3);
+  if (mode&1)
+  { WIFI.print("ac0:");
+    WIFI.print(toOct(a0));
+    WIFI.print(" 1:");
+    WIFI.print(toOct(a1));
+    WIFI.print(" 2:");
+    WIFI.print(toOct(a2));
+    WIFI.print(" 3:");
+    WIFI.print(toOct(a3));
+    WIFI.print(" ");
+
+    if (carry)
+      WIFI.println("C");
+    else
+      WIFI.println(".");
+  }
+
+  if (mode&2)
+  { in = examine(pc);
+    WIFI.print(toOct(pc));    // print address
+    WIFI.print(printDisas(in, OCT));    // disassemble instruction
+  
+    int mref = (in>>11)&0x1f;
+    int b=(in&0x700)>>8;
+    int dest=in&0xff;
+    bool target=false;
+    int indirect=0;
+    unsigned int t=0;
+  
+    if      (mref<=1)        { target = true; } // jmp, jms
+    else if (mref<=3)        { target = true; indirect=1; } // isz, dsz
+    else if ((mref&0x1c)==4) { target = true; indirect=1; } // lda
+    else if ((mref&0x1c)==8) { target = true; } // sta
+  
+    if (target)
+    { switch(b)
+      { case 1: case 5: if (dest&0x80) t = pc-(128-(dest&127)); else t=pc+dest; break;
+        case 2: case 6: if (dest&0x80) t = a2-(128-(dest&127)); else t=a2+dest; break;
+        case 3: case 7: if (dest&0x80) t = a3-(128-(dest&127)); else t=a3+dest; break;
+        case 0: case 4: t=dest; break;     
+      }
+  
+      if (b>3) indirect++;
+      WIFI.print(" ");
+      if (b>3) WIFI.print("@");
+      if (b>0) WIFI.print(toOct(t));
+  
+      for (int i=0; i<indirect; i++)
+      { if (b>3) do t=examine(t); while (t&0x8000);
+        else t=examine(t);
+      }
+           
+      if (indirect)
+      { WIFI.print("->");
+        WIFI.print(toOct(t));
+      }
+    }
+  }
+  examine(pc);
+}
+#endif
+
 // Array with contents of punched tape; there is space for several tapes
 #include "novabasic1.tape.h"
 
@@ -1546,7 +1816,7 @@ String tapeloader(const unsigned char*p, int len, String name)
    return "";
 }
 
-#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41)
+#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41) || defined(ARDUINO_RP_PICO)
 #  define EEPROMWORDS 2020  // for Teensy 3.5 and 4.1; has 4096 bytes, 56 reserved for other data
 #else
 #  ifdef ARDUINO_TEENSY40
@@ -1637,10 +1907,9 @@ void unload(const unsigned short *p, int eeprom, int base)
     tft.println("** Session does not fit in eeprom; not stored **");
     delay(5000);
   }
-#ifndef HASNOSD
+#ifdef SD_CS
   else if (eeprom && hasSD)
   { unsigned short s=ndiff;
-
     myFile = SD.open("tnses1.bin", FILE_WRITE);
     myFile.seek(0);
     myFile.write(s>>8);
@@ -1759,7 +2028,7 @@ int getSessionLength(int id)
 { if (id==basicsession[0]) return sizeof(basicsession)/2;
   if (id==basiccode[0]) return sizeof(basiccode)/2;
   if (id==basicpong[0]) return sizeof(basicpong)/2;
-#ifndef HASNOSD
+#ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1780,7 +2049,7 @@ int getSessionBase(int id)
 { if (id==basicsession[0]) return basicsession[1];
   if (id==basiccode[0]) return basiccode[1];
   if (id==basicpong[0]) return basicpong[1];
-#ifndef HASNOSD
+#ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1806,7 +2075,7 @@ const unsigned short *getSessionAddress(int id)
   if (id==basicsession[0]) return basicsession;
   if (id==basiccode[0]) return basiccode;
   if (id==basicpong[0]) return basicpong;
-#ifndef HASNOSD
+#ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1841,7 +2110,7 @@ int getSessionID(String name)
   if (name==".BASICSAMPLE") return basiccode[0];
   if (name==".PONG") return basicpong[0];
   if (name==".BASICPONG") return basicpong[0];
-#ifndef HASNOSD
+#ifdef SD_CS
   if (hasSD && name==".SD")
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -1864,7 +2133,7 @@ String getSessionName(int id)
 { if (id==basicsession[0] || id==-1) return ".BASICSESSION";
   if (id==basiccode[0]    || id==-2) return ".BASICSAMPLE";
   if (id==basicpong[0]    || id==-3) return ".BASICPONG";
-#ifndef HASNOSD
+#ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
     if (myFile)
@@ -2203,6 +2472,9 @@ void processButton(int but)
     if (hasSD) id=restoreSession(".SD"); 
     else id=restoreSession(".EEPROM"); 
     if (id==0) 
+    { id=restoreSession(".BASICSAMPLE"); 
+    }
+    if (id==0) 
     { return;
     }
     novaAddress=2; novaSwitches=2;  
@@ -2213,7 +2485,11 @@ void processButton(int but)
   }
 
   // long push program load stores session modifies to eeprom
-  if (but==20) { novaButton=19; storeSession(); }
+  if (but==20) { novaButton=19; storeSession(); 
+#if defined(PICO) || defined(ARDUINO_LOLIN32)
+                 EEPROM.commit(); 
+#endif
+               }
 
   // menus for running software
   if (but==21) 
@@ -2227,6 +2503,7 @@ void processButton(int but)
                  else if (SIMINTERVAL<2) SIMINTERVAL=31; 
                  else if (SIMINTERVAL<100) SIMINTERVAL=971;
                  else SIMINTERVAL=39731;
+                 keySel=-99; updateImage();
                }
   if (but==24) 
   { Serialwrite(-1); 
@@ -2261,7 +2538,7 @@ void processButton(int but)
                  keySel=-99; // forces repaint
                  helpScreen=-1;
                  clearText(true);
-                 keyBank=2;
+                 keyBank=defaultKeyBank;
                }
 
   if (but==26) 
@@ -2276,11 +2553,11 @@ void processButton(int but)
 
   if (but==49) { novaKey = novaKey!=2?2:1; // power 
                  novaRunning = false;
-                 keyBank=2;
+                 keyBank=defaultKeyBank;
                  reset_all(0);
+                 SIMINTERVAL=973; // default
                  
-
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICO)
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
                  { analogWrite(14, 100); 
@@ -2326,7 +2603,7 @@ void processButton(int but)
 
                  delay(300); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICO)
                  // Dim green light when ON
                  if (novaKey==2) 
                    analogWrite(14, 3); 
@@ -2794,7 +3071,7 @@ void processSerial(int count)
 
           else for(int b=0; b<=65535;)
           { String s = printDisas(b, OCT);
-	    s.toLowerCase();
+	          s.toLowerCase();
             if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
               b+=63; 
             // must be different instruction (all coded in high 10 bits)
@@ -3206,7 +3483,7 @@ void processSerial(int count)
       else if (line.startsWith("unloaddiff "))
       { int pos1=11;
         String filename = line.substring(pos1, 99);
-	filename.toUpperCase();
+	      filename.toUpperCase();
         unloadDiffCode(filename);
       }
 
@@ -3222,6 +3499,9 @@ void processSerial(int count)
         EEPROM.write(58, 0);
         EEPROM.write(59, 0);
         Serial.println("Erased EEPROM session; will not load anymore");
+#if defined(PICO) || defined(ARDUINO_LOLIN32)
+        EEPROM.commit();
+#endif
       }
 
       else if (line.startsWith("session "))
@@ -3263,7 +3543,794 @@ void processSerial(int count)
   }
 }
 
+// process wifi data to pass to Nova or for monitor
+#ifdef WIFI
+void processWifi(int count)
+{ int av = WIFI.available();
+  byte b = WIFI.read();
+  char m[50];
+  int pc;
+  int a;
+
+  // power ON if not
+  if (novaKey==1)
+  { processButton(49);
+    return;
+  }
+  
+  if (b==PS2_F1)
+  { processButton(49); // on-off
+    return;
+  }
+  else if (b==PS2_F2)
+  { processButton(19); // restore
+    return;
+  }
+  else if (b==PS2_F3)
+  { processButton(20); // store
+    return;
+  }
+  else if (b==PS2_F4)
+  { processButton(23); // speed
+    return;
+  }
+  else if (b==PS2_F5) 
+  { about();           // about
+    return;
+  }
+  else if (b==PS2_F6)
+  { processButton(25); // cls
+    return;
+  }
+  else if (b==PS2_F7)
+  { processButton(10); // stop
+    return;
+  }
+  else if ( b==PS2_F8)
+  { processButton(17); // step
+    return;
+  }
+  else if (b==PS2_F9)
+  { processButton(12); // continue
+    return;
+  }
+  else if (b==PS2_F10)
+  { processButton(24); // menu
+    return;
+  }
+  else if (b==PS2_F12)
+  { processButton(26); // help
+    return;
+  }
+
+  if (SerialIO) 
+  { if (b==3)
+    { SerialIO=false;
+      stopNova();
+      WIFI.println("ctrl-C");
+      WIFI.print(">");
+      return;
+    }
+    else
+    { if (DEV_IS_DONE(INT_TTI)) 
+     { if (av) injectSerial(b); // avoid it getting lost
+        return;
+     }
+      
+      //if (DEV_IS_BUSY(INT_TTI))
+      { ttibuf= b;
+        DEV_CLR_BUSY( INT_TTI ) ;
+        DEV_SET_DONE( INT_TTI ) ;
+        DEV_UPDATE_INTR ;
+        return;
+      }
+    }
+    return;
+  }
+
+  // ctrl-C
+  if (b==3)
+  { SerialIO=false;
+    stopNova();
+    WIFI.println("ctrl-C");
+    WIFI.print(">");
+    return;
+  }
+
+  // new interactive mode
+  else 
+  { if (b==27) // read escape key sequences (up and down)
+    { int k = WIFI.read();
+      if (k=='[')
+      { k = WIFI.read();
+        if (k=='A')
+        { nhist--;
+          if (nhist<0) nhist=0;
+          line = history[nhist];
+          WIFI.write("\33[2K\r");
+          WIFI.print(">");
+          WIFI.print(line);
+        }
+        else if (k=='B')
+        { nhist++;
+          if (nhist>=NHISTORY) nhist=NHISTORY-1;
+          line = history[nhist];
+          WIFI.write("\33[2K\r");
+          WIFI.print(">");
+          WIFI.print(line);
+        }
+      }
+      else WIFI.write(k);
+    }
+    else if (b==127 || b==8) // backspace
+    { if (line.length()>0) 
+      { line.remove(line.length()-1);
+        WIFI.write(8);
+        WIFI.write(32);
+        WIFI.write(8);
+      }
+    }
+    else if (b != '\r' && b != '\n') 
+    { line.concat(char(b)); 
+      WIFI.write(b);
+    }
+
+    // enter
+    if (b == '\r') 
+    { // auto suggest next command
+      if (line=="" && nextcmd!="")
+      { line=nextcmd;
+        WIFI.write("\33[2K\r");
+        WIFI.print(">");
+        WIFI.print(line);
+        nextcmd="";
+        return;
+      }
+  
+      WIFI.println();
+
+      // search place to store history and store it
+      nhist=-1;
+      for (int i=0; i<NHISTORY; i++)
+      { if (history[i]=="") 
+        { history[i]=line;
+          nhist=i+1;
+          break;
+        }
+      }
+      if (nhist==-1)
+      { for (int i=1; i<NHISTORY; i++) 
+        { history[i-1]=history[i];
+        }
+        nhist=NHISTORY-1;
+        history[nhist++]=line;
+      }
+
+      // stop Nova when running
+      pc=NovaPC&0x7fff;
+          
+      if (line.startsWith("autostart"))
+      { line = nextcmd;
+        if(getSessionName(rootID)==".BASICSESSION")
+        injectSerial("\x1b");
+      }
+
+      // show help text
+      if (line.startsWith("help"))
+      { WIFI.println(helpstring);
+      }
+
+      // Nova virtual console deposit (Kaddress/data)
+      else if (line.startsWith("K"))
+      { int pos1 = 1;
+        int pos2 = line.indexOf('/', 0);
+        if (pos2<0)
+        { kmode=false;
+        }
+        else
+        { int a = readOct(line, pos1);
+          int b = readOct(line, pos2+1);
+          deposit(a, b);
+          kmode=true;
+          kaddress=a+1;
+        }
+      }
+      else if (kmode && line[0]>'0' && line[0]<='7')
+      { int b=readOct(line, 0);
+        deposit(kaddress, b);
+        kaddress++;
+      }
+
+      // disassemble
+      else if (line.startsWith("list "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 16 : readOct(line, pos2+1);
+        for (unsigned short i=0; i<b; i++)
+        { WIFI.print(toOct(a));
+          unsigned short v=examine(a++);
+          WIFI.print(" ");
+          WIFI.print(toOct(v));
+          WIFI.println(printDisas(v, OCT));
+        }
+        nextcmd = "list "+toOct(a)+" "+toOct(b);
+        examine(pc);
+      }
+        
+      // dump memory
+      else if (line.startsWith("dump "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 16 : readOct(line, pos2+1);
+        for (unsigned short i=0; i<b; i++)
+        { WIFI.print(toOct(a));
+          unsigned short v=examine(a++);
+          WIFI.print(" ");
+          WIFI.print(toOct(v));
+          WIFI.print(" ");
+          WIFI.print(char(max(v>>8,32)));
+          WIFI.print(char(max(v&255,32)));
+          WIFI.println("");
+        }
+        nextcmd = "dump "+toOct(a)+" "+toOct(b);
+        examine(pc);
+      }
+
+      // read or set accumulator
+      else if (line.startsWith("ac"))
+      { int pos1 = 2;
+        int pos2 = line.indexOf(' ', 3);
+        unsigned short a = readOct(line, pos1);
+        if (pos2>=0) depositAC(a, readOct(line, pos2+1));
+        WIFI.println("ac"+String(a)+" = "+toOct(examineAC(a)));
+        if (pos2>=0) nextcmd = "ac"+String((a+1)%4)+" "+toOct(readOct(line, pos2+1));
+        else nextcmd = "ac"+String((a+1)%4);
+      }
+
+      // read or set pc
+      else if (line.startsWith("pc"))
+      { int pos2 = line.indexOf(' ', 2);
+        if (pos2>=0) examine(readOct(line, pos2+1));
+        NovaPC = readOct(line, pos2+1);
+        WIFI.println("pc = "+toOct(NovaPC&0x7fff));
+        nextcmd = "step";
+      }
+
+      // show all registers
+      else if (line.startsWith("reg"))
+      { for (int a=0; a<4; a++)
+          WIFI.println("ac"+String(a)+" = "+toOct(examineAC(a)));
+        WIFI.println("pc = "+toOct(NovaPC&0x7fff));
+        WIFI.println("carry = "+String(NovaC!=0));
+        // WIFI.println("intrq = "+String(int_req, OCT));
+      }
+
+      // read or set memory location
+      else if (line.startsWith("mem "))
+      { int pos1 = 4;
+        int pos2 = line.indexOf(' ', 5);
+        unsigned short a = readOct(line, pos1);
+        if (pos2>=0) deposit(a, readOct(line, pos2+1));
+        WIFI.println("mem "+toOct(a)+" = "+toOct(examine(a)));
+        examine(pc);
+        if (pos2>=0) nextcmd = "mem "+toOct(a+1)+" "+toOct(readOct(line, pos2+1));
+        else nextcmd = "mem "+toOct(a+1);
+      }
+
+      // assemble instruction
+      else if (line.startsWith("asm "))
+      { int pos1 = 4;
+        int pos2 = line.indexOf(' ', 5);
+        unsigned short a = readOct(line, pos1);
+        if (pos2>=0) {
+          String t=line.substring(pos2);
+          t.toLowerCase();
+
+          // shortcuts to frequent routines, must be in memory to work
+          if      (t==" .mul"   ) deposit(a, 0x043e); // JMS @3e etc
+          else if (t==" .div"   ) deposit(a, 0x043f);
+          else if (t==" .sys"   ) deposit(a, 0x0440);
+          else if (t==" .memclr") deposit(a, 0x045b);
+          else if (t==" .memcpy") deposit(a, 0x045c);
+          else if (t.startsWith(" .db "))     // .db num or .db "string"
+          { int pos3 = t.indexOf('"');
+            if (pos3>0)
+            { int pos4=t.indexOf('"',pos3+1);
+              t = t.substring(pos3+1, pos4);
+              int j=t.length()+1;
+              if (j&1) j++;
+              for (int i=0; i<j; i+=2, a++)
+                deposit(a, ((t[i]<<8)+t[i+1]));
+              a--;
+            }
+            else
+            { pos3 = t.indexOf(' ', 4);
+              unsigned short b = readOct(t, pos3+1);
+              deposit(a, b);
+            }
+          }
+
+          else for(int b=0; b<=65535;)
+          { String s = printDisas(b, OCT);
+            s.toLowerCase();
+            if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
+              b+=63; 
+            // must be different instruction (all coded in high 10 bits)
+            else if (s.equals(t))
+            { deposit(a, b);
+              break;
+            }
+            else 
+              b++;
+          }
+          nextcmd = "asm "+toOct(a+1)+" ";
+        }
+        WIFI.print(toOct(a));
+        unsigned short v=examine(a++);
+        WIFI.print(" ");
+        WIFI.print(toOct(v));
+        WIFI.println(printDisas(v, OCT));
+        examine(pc);
+      }
+
+      // run without serial IO
+      else if (line.startsWith("go "))
+      { int pos1 = 3;
+        unsigned short a = readOct(line, pos1);
+        WIFI.println("running");
+        SerialIO=true;
+        startNova(a);
+        nextcmd = "stop";
+      }
+
+      // run with serial IO
+      else if (line.startsWith("run "))
+      { int pos1 = 4;
+        SerialIO=true;
+        unsigned short a = readOct(line, pos1);
+        WIFI.println("running, use ctrl-c to return to command mode");
+        startNova(a);
+        nextcmd = "stop";
+      }
+
+      else if (line.startsWith("reset"))
+      { resetNova();
+        stopNova(); 
+        if(SerialIO) 
+        { WIFI.println("interactive mode");
+          SerialIO=false; 
+        }  
+        nextcmd = "";
+      }
+
+      else if (line.startsWith("poweroff"))
+      { resetNova();
+        stopNova(); 
+        WIFI.println("power off");
+        SerialIO=false; 
+        novaKey=1;
+        nextcmd = "";
+      }
+
+      else if (line.startsWith("stop"))
+      { stopNova(); 
+        if(SerialIO) 
+        { WIFI.println("stopped");
+          SerialIO=false; 
+        }  
+        nextcmd = "continue";
+      }
+
+      else if (line.startsWith("continue"))
+      { continueNova();
+        SerialIO=true; 
+        nextcmd = "stop";
+      }
+
+      else if (line.startsWith("init")) {
+        setup();
+        delay(100);
+        nextcmd = "";
+      }
+
+      else if (line.startsWith("version")) {
+        WIFI.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
+        WIFI.println();
+        WIFI.println("Data General Nova - 1st 16 bit minicomputer in 1969");
+        WIFI.println("This circuit simulates a 1970 DG Nova 1200 machine,");
+        WIFI.println("equipped with 1 serial board and 4 8 KW core boards.");
+        WIFI.println("It runs the original 1970 DG BASIC software. You");
+        WIFI.println("can load and modify different 'sessions' to demo.");
+        WIFI.println();
+        WIFI.println("Note: the graphics terminal is an anachronism ;->>>");
+        WIFI.println();
+        WIFI.println("Contains parts of simhv3-9");
+        WIFI.println("Copyright (c) 1993-2008, Robert M. Supnik");
+        WIFI.println();
+        WIFI.println("Contains image from FrontPanel 2.0");
+        WIFI.println("Copyright (c) 2007-2008, John Kichury");
+        nextcmd = "";
+      }
+
+      else if (line.startsWith("about")) {
+        about();
+        nextcmd = "";
+      }
+
+      // load memory from eeprom
+      else if (line.startsWith("load "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        int pos3 = line.indexOf(' ', pos2+1);
+        if (pos2>=0 && pos3>=0)
+        { unsigned short a = readOct(line, pos1);
+          //unsigned short b = readOct(line, pos2+1);
+          //unsigned short c = readOct(line, pos3+1);
+          //
+          //Serial.println("loaded memory "+toOct(s)+ " with " + c + " blocks");
+          nextcmd = "run "+toOct(a);
+        }
+        else
+          nextcmd = "";
+        examine(pc);
+      }
+
+      // save memory to eeprom
+      else if (line.startsWith("save "))
+      { //int pos1 = 5;
+        //int pos2 = line.indexOf(' ', 6);
+        //int pos3 = line.indexOf(' ', pos2+1);
+        //if (pos2>=0 && pos3>=0)
+        //{ //unsigned short a = readOct(line, pos1);
+          //unsigned short b = readOct(line, pos2+1);
+          //unsigned short c = readOct(line, pos3+1);
+          //unsigned short s=a;
+          //
+          //Serial.println("saved memory "+toOct(s)+ " total of " + c + " blocks");
+        //}
+        nextcmd = "";
+        examine(pc);
+      }
+
+      // restore memory from eeprom
+      else if (line.startsWith("restore"))
+      { if (hasSD) restoreSession(".SD");
+        else restoreSession(".EEPROM");
+      }
+
+      // store memory to eeprom
+      else if (line.startsWith("store"))
+        storeSession();
+
+      // debug step
+      else if (line.startsWith("step"))
+      { int pos2 = line.indexOf(' ', 4);
+        unsigned short a = pos2>0 ? readOct(line, pos2+1) : 1;
+        for (int i=0; i<a; i++) {
+          WIFIDebug(1);
+          WIFIDebug(2); 
+          WIFI.println();
+          stepNova();
+        }
+        nextcmd = "step "+toOct(a);
+      }
+
+      // print lights status
+      else if (line.startsWith("lights")) {
+        WIFI.println("Data="+toOct(novaData)); 
+        WIFI.println("Addr="+toOct(novaAddress)); 
+        WIFI.println("Status="+toOct(novaLights));
+        nextcmd = "lights";
+      }
+
+      // run test function (may not return)
+      else if (line.startsWith("test "))
+      { //int pos1 = 5;
+        //unsigned short a = readOct(line, pos1);
+        //tests(a);
+      }
+
+      // set line of LCD
+      else if (line.startsWith("lcd "))
+      { int pos1 = 4;
+        int pos2 = line.indexOf(' ', pos1+1);
+        if (pos2>=0)
+        { unsigned short a = readOct(line, pos1);
+          //display(a, line.substring(pos2+1));
+          nextcmd = "lcd "+String((a+1)%5)+" "+line.substring(pos2+1);
+        }
+      }
+
+      // program leds
+      else if (line.startsWith("led "))
+      { int pos1 = 4;
+        unsigned short a = readOct(line, pos1);
+        //gpio(a & 255);
+        digitalWrite(13, (a>>8)&1);
+        //digitalWrite(12, (a>>9)&1);
+        //digitalWrite(11, (a>>10)&1);
+        //writeColor(a&15);
+        nextcmd = "led "+toOct(a+1);
+      }
+          
+      // program DAC
+      else if (line.startsWith("dac "))
+      { int pos1 = 4;
+        unsigned short a = readOct(line, pos1);
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
+#ifdef A14
+        analogWrite(A14, a);
+#endif
+#endif
+        nextcmd = "dac "+toOct(a+1);
+      }
+
+      // read switches bank
+      else if (line.startsWith("reads"))
+      { WIFI.println("Switches="+toOct(novaSwitches)); 
+        nextcmd = "reads";
+      }
+
+      // read key
+      else if (line.startsWith("readk"))
+      { //Serial.println("Key="+toOct(readKeys())); 
+        nextcmd = "readk";
+      }
+
+      // write data bus (for unconnected nova)
+      else if (line.startsWith("writed "))
+      { int pos1 = 7;
+        unsigned short a = readOct(line, pos1);
+        novaData = a;
+        nextcmd = "writed "+toOct(a+1);
+      }
+
+      // write address bus (for unconnected nova)
+      else if (line.startsWith("writea "))
+      { int pos1 = 7;
+        unsigned short a = readOct(line, pos1);
+        novaAddress = a;
+        nextcmd = "writea "+toOct(a+1);
+      }
+
+      // write lights (for unconnected nova)
+      else if (line.startsWith("writel "))
+      { int pos1 = 7;
+        unsigned short a = readOct(line, pos1);
+        novaLights = a;
+        nextcmd = "writel "+toOct(a+1);
+      }
+
+      // read ADC
+      else if (line.startsWith("adc"))
+      { 
+        int pos1 = 4;
+        int pins[8] = {A0, A1, A2, A3, A4, A5, A6, A7};
+        int pin=readOct(line, pos1);
+        pinMode(pins[pin&7], INPUT);
+        WIFI.println("adc"+String(pin)+"="+toOct(analogRead(pins[pin&7])));
+        nextcmd = "adc";
+      }
+
+      // list eeprom block in hex
+      else if (line.startsWith("eeprom "))
+      { int pos1 = 7;
+        unsigned short a = readOct(line, pos1);
+        //
+        nextcmd = "eeprom "+toOct(a+1);
+      }
+
+      // list memory block in hex
+      else if (line.startsWith("memory "))
+      { int pos1 = 7;
+        unsigned short a = readOct(line, pos1);
+        for (short i=0; i<64; i++)
+        { String s;
+          s = toHex(examine(a+i));
+          if ((i&7)==7) WIFI.println(s); else WIFI.print(s);
+        }
+        nextcmd = "memory "+toOct(a+64);
+      }
+
+      // clear block of memory
+      else if (line.startsWith("clear "))
+      { int pos1 = 6;
+        int pos2 = line.indexOf(' ', 7);
+        int pos3 = line.indexOf(' ', pos2+1);
+        if (pos2>=0)
+        { unsigned short a = readOct(line, pos1);
+          unsigned short b = readOct(line, pos2+1);
+          unsigned short c = pos3<0 ? 0 : readOct(line, pos3+1);
+          unsigned short s=a;
+          for (int i=0; i<b; i++)
+            deposit(s+i, c);
+          WIFI.println("cleared memory "+toOct(s)+ " " + toOct(b) + " words to " + toOct(c));
+          nextcmd = "dump "+toOct(a);
+        }
+        else
+          nextcmd = "";
+        examine(pc);
+      }
+
+      // load hex data to memory
+      else if (line.startsWith(":"))
+      { line.toCharArray(m, 50);
+        unsigned short n = readHex(m+1,2);
+        unsigned short a=readHex(m+3,4);
+        if (n<=10) for (unsigned short i=0; i<n; i++) deposit(a++, readHex(m+7+i*4,4));
+        nextcmd = "";
+      }
+
+      // load hex data (16 bytes) to eeprom
+      else if (line.startsWith(";"))
+      { //line.toCharArray(m, 50);
+        //unsigned short n = readHex(m+1,1);
+        //unsigned short a=readHex(m+2,4);
+        //
+        nextcmd = "";
+      }
+
+      else if (line.startsWith("?"))
+      { WIFI.print(toHex(novaAddress)); 
+        WIFI.print(toHex(novaData)); 
+        WIFI.println(toHex2(novaLights));
+        nextcmd = "?";
+      }
+
+      // dump all registers in hex
+      else if (line.startsWith("$"))
+      { for (int a=0; a<4; a++)
+          WIFI.print(toHex(examineAC(a)));
+        WIFI.println(toHex(novaAddress));
+        nextcmd = "";
+      }
+
+      // visualize memory as gray scale a=address b=length of visualization (default 1600 = 20 lines)
+      else if (line.startsWith("vis "))
+      { int pos1 = 4;
+        int pos2 = line.indexOf(' ', 5);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 1600 : readOct(line, pos2+1);
+        for (unsigned short i=0; i<b; i++)
+        { unsigned short v=examine(a++);
+          char visual[]=" .:-=+*#%@";
+          short w = v/2048;
+          if (v>=32768) WIFI.print("-");
+          else if (w>=(int)strlen(visual)) WIFI.print("+");
+          else WIFI.write(visual[w]);
+          if (i%80==79) WIFI.println("");
+        }
+        nextcmd = "vis "+toOct(a)+" "+toOct(b);
+        examine(pc);
+      }
+
+      // plot memory a=address b=value range (applied positive and negative)
+      else if (line.startsWith("plot "))
+      { int pos1 = 5;
+        int pos2 = line.indexOf(' ', 6);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 32767 : readOct(line, pos2+1);
+        short vals[80];
+        for (unsigned short i=0; i<80; i++) 
+          vals[i] = examine(a++);
+        for (short i=10; i>=-10; i--)
+        { for (unsigned short j=0; j<80; j++)
+          {  short v = (10*(int)vals[j] + b/2)/b;
+             if (v==i) WIFI.print("*");
+             else if (i==0) WIFI.print("-");
+             else WIFI.print(" ");
+           }
+          WIFI.println("");
+        }
+        nextcmd = "plot "+toOct(a)+" "+toOct(b);
+        examine(pc);
+      }
+
+      // write serial character
+      else if (line.startsWith("serw "))
+      { int pos1 = 5;
+        unsigned short a = readOct(line, pos1);
+        Serial1.write(a);
+        nextcmd = "serw "+toOct(a+1);
+      }
+
+      // set front panel switches
+      else if (line.startsWith("fp "))
+      { int pos1 = 3;
+        unsigned short a = readOct(line, pos1);
+        novaSwitches=a;
+      }
+
+      // absolute tape loader using data in eeprom; tape data is stored after 16 bytes $$llFILENAME@; where ll is its 16 bits length
+      else if (line.startsWith("tape "))
+      { int pos1 = 5;
+        String filename = line.substring(pos1, 99);
+        filename.toUpperCase(); // +"@";
+
+        // absolute tape loader using program data
+        if (filename==".BASIC")
+        { nextcmd=tapeloader(basictape, sizeof(basictape), ".basic");
+          WIFI.print(">");
+          line = "";
+          return;
+        }
+        if (filename=="LIST")
+        { WIFI.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
+        }
+        else if(filename!="LIST")
+          WIFI.println("Tape "+filename+" not found");
+      }
+
+      /*else if (line.startsWith("unloaddiff "))
+      { int pos1=11;
+        String filename = line.substring(pos1, 99);
+        filename.toUpperCase();
+        unloadDiffCode(filename);
+      }
+
+      else if (line.startsWith("unload"))
+      { unload((unsigned short *) NULL, 0, 0);
+      }
+      */
+      
+      else if (line.startsWith("cleareepromsession")) // undocumented
+      { EEPROM.write(38, 0);
+        EEPROM.write(39, 0);
+        EEPROM.write(56, 0);
+        EEPROM.write(57, 0);
+        EEPROM.write(58, 0);
+        EEPROM.write(59, 0);
+        WIFI.println("Erased EEPROM session; will not load anymore");
+      }
+
+      else if (line.startsWith("session "))
+      { int pos1 = 8;
+        String filename = line.substring(pos1, 99);
+        filename.toUpperCase();
+                
+        if (filename=="LIST")
+        { for (int i=1; i<100; i++)
+          { String name=getSessionName(-i);
+            int len= getSessionLength(getSessionID(name));
+            if (name!="" && len>0)
+            WIFI.println(name+" ; length "+String(len)+
+                           "; id: "+String(getSessionID(name))+
+                            "; based on: "+getSessionName(getSessionBase(getSessionID(name))));
+          }
+        }
+        else
+        { int id=getSessionID(filename);
+          if (id>0) restoreSession(filename);
+          else WIFI.println("Session "+filename+" not found");
+          nextcmd = "run 2";
+        }
+      }
+
+      else if (line.startsWith("speed "))
+      { int pos1 = 6;
+        unsigned short a = readOct(line, pos1);
+        SIMINTERVAL=a;
+        nextcmd="";
+      }       
+
+      else if (line.length()>0)
+        WIFI.println("Unknown or mistyped command ignored");
+
+      WIFI.print(">");
+      line = "";
+    }
+  }
+}
+#endif
+
 void setup() {
+
+#ifdef TFT_RESET
+pinMode(TFT_RESET, OUTPUT);
+digitalWrite(TFT_RESET, HIGH);
+#endif
 
 // on the long teensy boards, the TFT must overlap pins 33-39 (2 pin stick over), use pin 32 for LED, 36 for reset
 // all other pins are wired to the orginals, so they are set to input for safety
@@ -3283,13 +4350,29 @@ void setup() {
   delay(100);
 #endif
 
-#ifdef LAZY_BREADBOARDTFT
+#ifdef TFT_GND
   pinMode(TFT_GND, OUTPUT);
   digitalWrite(TFT_GND, 0);
+#endif
+
+#ifdef TFT_VCC
   pinMode(TFT_VCC, OUTPUT);
   digitalWrite(TFT_VCC, 1);
-  pinMode(TFT_VCC, OUTPUT);
-  digitalWrite(TFT_VCC, 1);
+#endif
+
+#ifdef TFT_RESET
+  pinMode(TFT_RESET, OUTPUT);
+  digitalWrite(TFT_RESET, 1);
+#endif
+
+#ifdef TFT_DC
+  pinMode(TFT_DC, INPUT);
+#endif
+
+#ifdef TFT_MOSI
+  pinMode(TFT_MOSI, INPUT);
+  pinMode(TFT_SCK, INPUT);
+  pinMode(TFT_MISO, INPUT);
 #endif
 
 #ifdef TFT_LED
@@ -3310,8 +4393,12 @@ void setup() {
   pinMode(ONOFFSLIDER, INPUT_PULLUP); // switch
 #endif
 
-#ifdef ARDUINO_LOLIN32
+#if defined(ARDUINO_LOLIN32)
   EEPROM.begin(2048); // Note: somehow initialising EEPROM 1st time takes forever; check GUI eeprom size setting
+#endif
+
+#if defined(PICO)
+  EEPROM.begin(4096);
 #endif
 
 #ifdef FEATHERWING_TFT_TOUCH
@@ -3320,12 +4407,6 @@ void setup() {
 
   // power button ps2 keyboard interface board
   pinMode(PWRBUTTON, INPUT_PULLUP); // switch
-#endif
-
-#ifdef TFT_LED
-  // jumper wire or resistor or direct connect
-  pinMode(TFT_LED, OUTPUT);
-  digitalWrite(TFT_LED, 1); // light ON
 #endif
 
 #ifdef SD_CS
@@ -3350,11 +4431,9 @@ void setup() {
   }
 #endif
 
-// Note: you can now set the SPI speed to any value
-// the default value is 30Mhz, but most ILI9341 displays
-// can handle at least 60Mhz and as much as 100Mhz
+  delay(100);
   tft.begin();
-#if !defined(LAZY_BREADBOARDTFT) && !defined(ARDUINO_LOLIN32)
+#ifndef USEADAFRUIT
   tft.setClock(75000000);
   tft.setRotation(1);
 #else
@@ -3369,7 +4448,7 @@ void setup() {
   
   Serial.println("Teensy Nova 1210 simulator!"); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICO)
   pinMode(14, OUTPUT); // red/green led, pin controlled analog
   pinMode(15, OUTPUT); // red/green led, pin controlled digital to support TEENSY35
 #endif
@@ -3378,7 +4457,7 @@ void setup() {
   updateImage();
   tft.setCursor(0,0);
   
-#if defined(ARDUINO_TEENSY35) || defined(ARDUINO_TEENSY41) || defined(FEATHERWING_TFT_TOUCH)
+#if defined(PS2_DATA)
   ps2kb.begin(PS2_DATA, PS2_CLK);
 #endif
 }
@@ -3411,7 +4490,7 @@ void loop(void) {
 #ifdef WIFI
   else if ((count=WIFI.available()))
   { hasWIFI = true;
-    processSerial(count);
+    processWifi(count);
     if (SerialIO) return;
   }
 #endif
@@ -3442,6 +4521,8 @@ void loop(void) {
   if(novaRunning)
   { simulateNova(SIMINTERVAL);
     instructions += SIMINTERVAL;
+    if (!novaRunning) updateImage();
+    //Serial.println("running: "+toOct(novaRunning));
   }
 
 #ifdef PWRBUTTON
@@ -3476,12 +4557,12 @@ void loop(void) {
   if (runtime && instructions>100 && novaKey>1)
   { tft.setTextColor(CL(255,255,0), CL(0,0,0));
     tft.setCursor(276, 178);
-    if (novaRunning) tft.print(String((float)instructions/runtime)+" ");
+    if (novaRunning) { tft.print(((float)instructions/runtime)); tft.print(" "); }
     else tft.print("     ");
   }
   
   // show disassembled code as well
-  if ((helpScreen>=0 || steppinghelp>0) && novaKey>1)
+  if ((helpScreen>=0 || steppinghelp>0 || SIMINTERVAL==1) && novaKey>1)
   { tft.setTextColor(CL(128,255,0), CL(40,75,125));
     tft.setCursor(100, 229);
     int s=novaData;
