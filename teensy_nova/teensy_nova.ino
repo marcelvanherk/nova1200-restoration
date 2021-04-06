@@ -77,6 +77,8 @@ Marcel van Herk, 2 April 2021      - Avoid redraw of unchanged lights and button
 Marcel van Herk, 4 April 2021      - Refactored configuration; added PICO mode; works best with updated ILI9431 & SPI libraries
                                    - PICO assumes/shows 4 buttons, although inputs for other 4 are provided
                                    - Tested with Teensy4.0, Teensy4.1, RPPico, Featherwing, Teensy3.5
+Marcel van Herk, 5 April 2021      - Reenabled optional LEDs on pico, happen to be on same pins!
+Marcel van Herk, 6 April 2021      - Added PS2_VCC2, use Bodmer TFT initialisation, fix led 400, reduced SPI clock for reliability
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -112,16 +114,20 @@ Marcel van Herk, 4 April 2021      - Refactored configuration; added PICO mode; 
 #  define A7 0
 #  ifndef BUTTON1
 #    define BUTTON1 26
-#    define BUTTON2 13 // unused
-#    define BUTTON3 12 // unused
-#    define BUTTON4 11 // unused
-#    define BUTTON5 10 // unused
+#    define BUTTON2 8 // unused
+#    define BUTTON3 7 // unused
+#    define BUTTON4 5 // unused
+#    define BUTTON5 4 // unused
 #    define BUTTONGND4 9
 #    define BUTTON6 6
 #    define BUTTON7 3
 #    define BUTTONGND5 2
 #    define BUTTON8 0
 #  endif
+#  define PS2_CLK 10
+#  define PS2_DATA 11
+#  define PS2_VCC 12
+#  define PS2_VCC2 13
 #endif
 
 #ifdef LAZY_BREADBOARDTFT
@@ -143,6 +149,7 @@ Marcel van Herk, 4 April 2021      - Refactored configuration; added PICO mode; 
 #  define WIFI Serial8
 #endif
 #  define PS2_VCC 36
+#  define PS2_VCC2 35
 #endif
 
 #ifdef LAZY_BREADBOARDBTN
@@ -2557,7 +2564,7 @@ void processButton(int but)
                  reset_all(0);
                  SIMINTERVAL=973; // default
                  
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICO)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) // && !defined(PICO)
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
                  { analogWrite(14, 100); 
@@ -2572,15 +2579,15 @@ void processButton(int but)
 #ifdef PS2_VCC
                  if (novaKey==2) 
                  { digitalWrite(PS2_VCC, 1); 
-                   if (PS2_VCC>24)
-                   { digitalWrite(PS2_VCC-1, 1); // kb ON
-                   }
+#ifdef PS2_VCC2
+                   digitalWrite(PS2_VCC2, 1); // kb ON
+#endif
                  }
                  else
                  { digitalWrite(PS2_VCC, 0); 
-                   if (PS2_VCC>24)
-                   { digitalWrite(PS2_VCC-1, 0); // kb OFF
-                   }
+#ifdef PS2_VCC2
+                   digitalWrite(PS2_VCC2, 1); // kb ON
+#endif
                  }
 #endif
       
@@ -2603,7 +2610,7 @@ void processButton(int but)
 
                  delay(300); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICO)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) // && !defined(PICO)
                  // Dim green light when ON
                  if (novaKey==2) 
                    analogWrite(14, 3); 
@@ -3265,7 +3272,12 @@ void processSerial(int count)
       { int pos1 = 4;
         unsigned short a = readOct(line, pos1);
         //gpio(a & 255);
+#ifdef PICO
+        pinMode(25, OUTPUT);
+        digitalWrite(25, (a>>8)&1);
+#else
         digitalWrite(13, (a>>8)&1);
+#endif
         //digitalWrite(12, (a>>9)&1);
         //digitalWrite(11, (a>>10)&1);
         //writeColor(a&15);
@@ -4432,7 +4444,13 @@ digitalWrite(TFT_RESET, HIGH);
 #endif
 
   delay(100);
+#ifdef PICO
+  tft.begin(25000000);
+  tft.lockTransaction(true);
+#else
   tft.begin();
+#endif
+
 #ifndef USEADAFRUIT
   tft.setClock(75000000);
   tft.setRotation(1);
@@ -4448,7 +4466,7 @@ digitalWrite(TFT_RESET, HIGH);
   
   Serial.println("Teensy Nova 1210 simulator!"); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICO)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) // && !defined(PICO)
   pinMode(14, OUTPUT); // red/green led, pin controlled analog
   pinMode(15, OUTPUT); // red/green led, pin controlled digital to support TEENSY35
 #endif
@@ -4479,7 +4497,10 @@ void loop(void) {
 
   // Injected or true serial data ?
   if ((count=injectSerialText.length()) &&  millis()-injectSerialDelay>20)
-  { processSerial(count);
+  { //pinMode(25, OUTPUT);
+    //digitalWrite(25, 1);
+    processSerial(count);
+    //digitalWrite(25, 0);
     injectSerialDelay=millis();
     //if (SerialIO) return;
   }
