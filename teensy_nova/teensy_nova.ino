@@ -79,6 +79,7 @@ Marcel van Herk, 4 April 2021      - Refactored configuration; added PICO mode; 
                                    - Tested with Teensy4.0, Teensy4.1, RPPico, Featherwing, Teensy3.5
 Marcel van Herk, 5 April 2021      - Reenabled optional LEDs on pico, happen to be on same pins!
 Marcel van Herk, 6 April 2021      - Added PS2_VCC2, use Bodmer TFT initialisation, fix led 400, reduced SPI clock for reliability
+Marcel van Herk, 7 April 2021      - Added some missing EEPROM.commits, fix led command on WIFI
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -2601,6 +2602,9 @@ void processButton(int but)
                  { EEPROM.put(0, novaSwitches); 
                    storeSession();
                    novaSwitches=0; 
+#if defined(PICO) || defined(ARDUINO_LOLIN32)
+                    EEPROM.commit(); 
+#endif
                  };
      
                  novaLights=0;
@@ -3226,7 +3230,11 @@ void processSerial(int count)
 
       // store memory to eeprom
       else if (line.startsWith("store"))
-        storeSession();
+      { storeSession();
+#if defined(PICO) || defined(ARDUINO_LOLIN32)
+         EEPROM.commit(); 
+#endif
+      }
 
       // debug step
       else if (line.startsWith("step"))
@@ -4013,8 +4021,12 @@ void processWifi(int count)
       }
 
       // store memory to eeprom
-      else if (line.startsWith("store"))
-        storeSession();
+      else if (line.startsWith("store")) 
+      { storeSession();
+#if defined(PICO) || defined(ARDUINO_LOLIN32)
+        EEPROM.commit(); 
+#endif
+     }
 
       // debug step
       else if (line.startsWith("step"))
@@ -4060,7 +4072,12 @@ void processWifi(int count)
       { int pos1 = 4;
         unsigned short a = readOct(line, pos1);
         //gpio(a & 255);
+#ifdef PICO
+        pinMode(25, OUTPUT);
+        digitalWrite(25, (a>>8)&1);
+#else
         digitalWrite(13, (a>>8)&1);
+#endif
         //digitalWrite(12, (a>>9)&1);
         //digitalWrite(11, (a>>10)&1);
         //writeColor(a&15);
