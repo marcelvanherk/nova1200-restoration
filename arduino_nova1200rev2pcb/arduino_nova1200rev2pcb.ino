@@ -81,7 +81,7 @@
 //              Added unused teensy pins and DAC to WRITELED command
 //              Added serial dac and adc commands; led command extends to teensy D11 and D12
 // mvh 20190426 Added .mul .div .memcpy .memclr .db
-// mvh 20190501 Added .db; fixed accelerated assembler; dump shows ascii, fix makehex
+// mvh 20190501 Added .db; fixed accelerated assembler; dump shows ascii, fix readHex
 //              init will clear lcdpos
 // mvh 20190508 Typo in serial manual
 // mvh 20190511 Added ? to serial mode to quickly read all lights
@@ -93,6 +93,8 @@
 // mvh 20190715 Added support for serial port to Nova
 // mvh 20190717 Added tape loaded tape FILENAME (max 12 characters)
 // mvh 20190720 tape list, store, restore, fp xx, HALT at xxx
+// mvh 20210411 Align with rev3pcb code; added tapeloader storing .basic in code; K upload
+
 // TODO: mode to list serial reply in hex
 // Do I need to keep @ as cancel for direct mode? 
 // Allow longer filenames for tape command
@@ -617,11 +619,11 @@ void assemble(int to, unsigned short *prog)
         else                        deposit(j++, 020400+04000*(a&7)+target);
       }                             // out of range
       else
-      { lcd.print("RANGE");
-        //lcd.print(" @");
-        //lcd.print(j, 8);
-        //lcd.print(" to ");
-        //lcd.print(target, 8);
+      { lcdprint("RANGE");
+        //lcdprint(" @");
+        //lcdprint(j, 8);
+        //lcdprint(" to ");
+        //lcdprint(target, 8);
         deposit(j++, 017777);
         delay(1000);
         return;
@@ -786,8 +788,8 @@ void setup() {
   lcdpos=0;
   clearline=false;
   lcd.begin(40, 2);   // welcome text on LCD
-  lcd.setCursor(0, 0);
-  lcd.print(F("Nova panel - Marcel van Herk " __DATE__));
+  lcdsetCursor(0, 0);
+  lcdprint(F("Nova panel - Marcel van Herk " __DATE__));
 
   for (byte i=0; i<16; i++)
   { unsigned int a=i*2048-1;
@@ -799,10 +801,10 @@ void setup() {
     else
       memsize=a+1;
   }
-  lcd.setCursor(0, 1);
-  lcd.print(F("Nova memory: "));
-  lcd.print(memsize);
-  lcd.print(F(" 16-bit words"));
+  lcdsetCursor(0, 1);
+  lcdprint(F("Nova memory: "));
+  lcdprint(memsize);
+  lcdprint(F(" 16-bit words"));
   examine(0);
   
   lcd2.begin(40, 2);    // welcome text on LCD
@@ -1047,10 +1049,10 @@ void resetNova(void)
   Serial.println("reset");
   WriteReg(11, 0);
   WriteReg(10, 8);
-  lcd.setCursor(0,1);
-  lcd.print(makespc(40));
-  lcd.setCursor(0,1);
-  lcd.print("reset"); 
+  lcdsetCursor(0,1);
+  lcdprint(makespc(40));
+  lcdsetCursor(0,1);
+  lcdprint("reset"); 
   novaRunning=false;
   examine(0);
 }
@@ -1060,6 +1062,35 @@ String makespc(int n)
 { String s;
   for (int i=0; i<n; i++) s.concat(" ");
   return s;
+}
+
+void lcdprint(String text)
+{ lcd.print(text);
+}
+
+void lcdwrite(uint8_t c)
+{ lcd.write(c);  
+}
+
+void lcdsetCursor(int x, int y)
+{ lcd.setCursor(x,y);
+}
+
+void lcdcursor(void)
+{ lcd.cursor();
+}
+
+void lcdnoCursor(void)
+{ lcd.noCursor();
+}
+
+void lcdclear(void)
+{ lcd.clear();
+}
+
+void lcdclearline(int y)
+{ lcd.setCursor(0, y);
+  lcd.print(makespc(40));
 }
 
 // make hex string with leading zeros
@@ -1092,8 +1123,8 @@ String toOct(unsigned int v) {
   return s;
 }
 
-// convert 4 digit hex string in buffer
-unsigned int makehex(char *buf, byte n)
+// convert n digit hex string in buffer
+unsigned int readHex(char *buf, byte n)
 { unsigned int r=0;
   for (int i=0; i<n; i++)
   { r = r<<4;
@@ -1104,7 +1135,8 @@ unsigned int makehex(char *buf, byte n)
   return r;
 }
 
-unsigned int makeoct(String s, int pos)
+// read octal string in buffer
+unsigned int readOct(String s, int pos)
 { unsigned int r=0;
   for (unsigned int i=pos; i<s.length(); i++)
   { if (s[i]<'0' || s[i]>'7') break;
@@ -1117,40 +1149,40 @@ unsigned int makeoct(String s, int pos)
 ////////////////////////////////////////////////////
 // print octal on LCD with leading zeros
 void lcdPrintOctal(unsigned int v) {
- lcd.print(toOct(v));
+ lcdprint(toOct(v));
 }
 
 // print octal on LCD with leading zeros followed by space and two ascii characters
 void lcdPrintOctalAscii(unsigned int v) {
  lcdPrintOctal(v);
- lcd.print(char(32));
- lcd.print(char(v>>8));
- lcd.print(char(v&255));
+ lcdprint(char(32));
+ lcdprint(char(v>>8));
+ lcdprint(char(v&255));
 }
 
 // print hex on LCD with leading zeros
 void lcdPrintHex(unsigned int v) {
- lcd.print(toHex(v));
+ lcdprint(toHex(v));
 }
 
 // print decimal on LCD with leading zeros
 void lcdPrintDecimal(unsigned int v) {
- if (v<10000) lcd.print(0);
- if (v<1000) lcd.print(0);
- if (v<100) lcd.print(0);
- if (v<10) lcd.print(0);
- lcd.print(v);
+ if (v<10000) lcdprint(0);
+ if (v<1000) lcdprint(0);
+ if (v<100) lcdprint(0);
+ if (v<10) lcdprint(0);
+ lcdprint(v);
 }
 
 // print long octal (21 bits) on LCD with leading zeros
 void lcdPrintLongOctal(unsigned long v) {
- if (v<0x40000) lcd.print(0);
- if (v<0x08000) lcd.print(0);
- if (v<0x01000) lcd.print(0);
- if (v<0x00200) lcd.print(0);
- if (v<0x00040) lcd.print(0);
- if (v<0x00008) lcd.print(0);
- lcd.print(v, OCT);
+ if (v<0x40000) lcdprint(0);
+ if (v<0x08000) lcdprint(0);
+ if (v<0x01000) lcdprint(0);
+ if (v<0x00200) lcdprint(0);
+ if (v<0x00040) lcdprint(0);
+ if (v<0x00008) lcdprint(0);
+ lcdprint(String(v, OCT));
 }
 
 // print help string on 3rd line of big LCD
@@ -1163,7 +1195,7 @@ void printHelp(String a)
 
 /////////////////////// disassembler ////////////////////////
 // part of disassembler - print shift in operate instruction
-String lcdPrintShift(unsigned int s) {
+String printShift(unsigned int s) {
   if (s==1) return String("L");
   else if (s==2) return String("R");
   else if (s==3) return String("S"); // byte swap
@@ -1171,7 +1203,7 @@ String lcdPrintShift(unsigned int s) {
 }
 
 // part of disassembler - print carry op in operate instruction
-String lcdPrintCarry(unsigned int s) {
+String printCarry(unsigned int s) {
   if (s==1) return String("Z");
   else if (s==2) return String("O");
   else if (s==3) return String("C");
@@ -1179,13 +1211,13 @@ String lcdPrintCarry(unsigned int s) {
 }
 
 // part of disassembler - print noload in operate instruction
-String lcdPrintNoload(unsigned int s) {
+String printNoload(unsigned int s) {
   if (s==1) return String("#");
   else return String("");
 }
 
 // part of disassembler - print skip part of operate instruction
-String lcdPrintSkip(unsigned int s) {
+String printSkip(unsigned int s) {
   if (s==1) return String("skp");
   if (s==2) return String("szc");
   if (s==3) return String("snc");
@@ -1197,7 +1229,7 @@ String lcdPrintSkip(unsigned int s) {
 }
 
 // part of disassembler - print target of memory access instruction
-String lcdPrintTarget(unsigned int mode, unsigned int disp, int octalmode) {
+String printTarget(unsigned int mode, unsigned int disp, int octalmode) {
   String s=" ";
   if (mode==0) { s += String(disp&255, octalmode); }
   if (mode==1) s += ("pc"); 
@@ -1218,7 +1250,7 @@ String lcdPrintTarget(unsigned int mode, unsigned int disp, int octalmode) {
 }
 
 // part of disassembler - print transfer and control in IOT instruction
-String lcdPrintIOT(unsigned int tr, unsigned int sk) {
+String printIOT(unsigned int tr, unsigned int sk) {
   String s = "";
   if (tr==0) s += ("NIO");
   if (tr==1) s += ("DIA");
@@ -1244,7 +1276,7 @@ String lcdPrintIOT(unsigned int tr, unsigned int sk) {
 }
 
 // Disassemble entire instruction and return
-String lcdPrintDisas(unsigned int v, int octalmode) {
+String printDisas(unsigned int v, int octalmode) {
   String s(" ");
   unsigned int mref = (v>>11)&0x1f;
   unsigned int opcode = (v>>8)&0x7;
@@ -1277,16 +1309,16 @@ String lcdPrintDisas(unsigned int v, int octalmode) {
   else if ((v&0xe73f)==0x633f) {s+=("INTA");s+=String(mref&3);}//dib#
 
   // data access instructions
-  else if (mref==0) { s+=("JMP"); s+=lcdPrintTarget((v&0x700)>>8, v&0xff, octalmode); }
-  else if (mref==1) { s+=("JMS"); s+=lcdPrintTarget((v&0x700)>>8, v&0xff, octalmode); }
-  else if (mref==2) { s+=("ISZ"); s+=lcdPrintTarget((v&0x700)>>8, v&0xff, octalmode); }
-  else if (mref==3) { s+=("DSZ"); s+=lcdPrintTarget((v&0x700)>>8, v&0xff, octalmode); }
-  else if ((mref&0x1c)==4) { s+=("LDA"); s+=String(mref&3); s+=lcdPrintTarget((v&0x700)>>8, v&0xff, octalmode); }
-  else if ((mref&0x1c)==8) { s+=("STA"); s+=String(mref&3); s+=lcdPrintTarget((v&0x700)>>8, v&0xff, octalmode); }
+  else if (mref==0) { s+=("JMP"); s+=printTarget((v&0x700)>>8, v&0xff, octalmode); }
+  else if (mref==1) { s+=("JMS"); s+=printTarget((v&0x700)>>8, v&0xff, octalmode); }
+  else if (mref==2) { s+=("ISZ"); s+=printTarget((v&0x700)>>8, v&0xff, octalmode); }
+  else if (mref==3) { s+=("DSZ"); s+=printTarget((v&0x700)>>8, v&0xff, octalmode); }
+  else if ((mref&0x1c)==4) { s+=("LDA"); s+=String(mref&3); s+=printTarget((v&0x700)>>8, v&0xff, octalmode); }
+  else if ((mref&0x1c)==8) { s+=("STA"); s+=String(mref&3); s+=printTarget((v&0x700)>>8, v&0xff, octalmode); }
 
   // IOT instructions
   else if ((mref&0x1c)==12)
-  { s+=lcdPrintIOT((v&0x700)>>8, (v&0xc0)>>6); 
+  { s+=printIOT((v&0x700)>>8, (v&0xc0)>>6); 
     s+=String(mref&3); 
     s+=(" "); 
     s+=String(v&0x3f,octalmode); 
@@ -1302,12 +1334,12 @@ String lcdPrintDisas(unsigned int v, int octalmode) {
     if (opcode==5)  s+=("SUB");
     if (opcode==6)  s+=("ADD");
     if (opcode==7)  s+=("AND");
-    s+=lcdPrintNoload((v&0x8)>>3);
+    s+=printNoload((v&0x8)>>3);
     s+=String((mref&12)>>2); // source
     s+=String(mref&3);	     // destination
-    s+=lcdPrintShift((v&0xc0)>>6);
-    s+=lcdPrintCarry((v&0x30)>>4);
-    s+=lcdPrintSkip(v&7);
+    s+=printShift((v&0xc0)>>6);
+    s+=printCarry((v&0x30)>>4);
+    s+=printSkip(v&7);
   }
   else 
   { s+=('?'); s+=String(v); } // unknown instruction
@@ -1387,8 +1419,8 @@ unsigned int packassemble(unsigned long v)
 }
 
 // Disassemble 21 bits instruction, mini assembler style, and print to lcd
-String lcdPrintMiniDisas(unsigned long v, int octalmode) {
-  return lcdPrintDisas(packassemble(v), octalmode);
+String printMiniDisas(unsigned long v, int octalmode) {
+  return printDisas(packassemble(v), octalmode);
 } 
 
 void printAssemblyHelp(unsigned long v, int noctal)
@@ -1427,29 +1459,29 @@ void printAssemblyHelp(unsigned long v, int noctal)
 ////////////////////////////////////////////////////
 // mini debugger display on lcd in single step mode
 void lcdPrintDebug(void) {
-  lcd.clear();
+  lcdclear();
   unsigned int pc = readAddr()&0x7fff;
   unsigned int carry = readAddr()&0x8000;
   unsigned int in = readData(), a0, a1, a2=0, a3=0;
-  lcd.setCursor(0,0);		// print 4 accumulators
-  lcd.print("ac0:");
+  lcdsetCursor(0,0);		// print 4 accumulators
+  lcdprint("ac0:");
   lcdPrintOctal(a0=examineAC(0));
-  lcd.print(" 1:");
+  lcdprint(" 1:");
   lcdPrintOctal(a1=examineAC(1));
-  lcd.print(" 2:");
+  lcdprint(" 2:");
   lcdPrintOctal(a2=examineAC(2));
-  lcd.print(" 3:");
+  lcdprint(" 3:");
   lcdPrintOctal(a3=examineAC(3));
-  lcd.print(" ");
+  lcdprint(" ");
   if (carry)
-    lcd.print("C");
+    lcdprint("C");
   else
-    lcd.print(".");
+    lcdprint(".");
   in = examine(pc);
-  lcd.setCursor(0,1);
+  lcdsetCursor(0,1);
   lcdPrintOctal(pc);    // print address
-  lcd.setCursor(6,1);
-  lcd.print(lcdPrintDisas(in, OCT));    // disassemble instruction
+  lcdsetCursor(6,1);
+  lcdprint(printDisas(in, OCT));    // disassemble instruction
 
   int mref = (in>>11)&0x1f;
   int b=(in&0x700)>>8;
@@ -1472,16 +1504,16 @@ void lcdPrintDebug(void) {
     }
 
     if (b>3) indirect++;
-    lcd.print(" ");
-    if (b>3)lcd.print("@");
-    if (b>0)lcdPrintOctal(t);
+    lcdprint(" ");
+    if (b>3) lcdprint("@");
+    if (b>0) lcdPrintOctal(t);
     for (int i=0; i<indirect; i++)
     { if (b>3) do t=examine(t); while (t&0x8000);
       else t=examine(t);
     }
          
     if (indirect)
-    { lcd.print("->");
+    { lcdprint("->");
       lcdPrintOctal(t);
     }
   }
@@ -1518,7 +1550,7 @@ void serialDebug(int mode) {
   if (mode&2)
   { in = examine(pc);
     Serial.print(toOct(pc));    // print address
-    Serial.print(lcdPrintDisas(in, OCT));    // disassemble instruction
+    Serial.print(printDisas(in, OCT));    // disassemble instruction
   
     int mref = (in>>11)&0x1f;
     int b=(in&0x700)>>8;
@@ -1655,9 +1687,9 @@ void tests(int func)
 { // register test: disconnect boards from nova and connect data req or inst req to gnd
   if (func==0) // 1st switch up
   { for(int count=0; count<65536; count++)
-    { lcd.setCursor(0,1);
+    { lcdsetCursor(0,1);
       lcdPrintOctal(count);
-      lcd.print("  reg test ");
+      lcdprint("  reg test ");
       lcdPrintOctal(readLights());
       writeData(32768>>(count&15));
       writeInst(1<<(count&15));
@@ -1674,25 +1706,25 @@ void tests(int func)
   // full memory dump
   else if (func==1) // 2nd switch up
   { stopNova();
-    lcd.setCursor(0,1);
-    lcd.print("     dump active");
-    lcd.setCursor(0,1);
+    lcdsetCursor(0,1);
+    lcdprint("     dump active");
+    lcdsetCursor(0,1);
     for(int a=0; a<memsize; a++)
-    { if ((a&511)==511) lcd.print("#");
+    { if ((a&511)==511) lcdprint("#");
       int v = examine(a);
       Serial.print(toHex(a));
       Serial.print(":");
       Serial.println(toHex(v));
     }
-    lcd.setCursor(0,1);
-    lcd.print("dump ready      ");
+    lcdsetCursor(0,1);
+    lcdprint("dump ready      ");
   }
 
   // small memory test, address 0 only
   else if (func==2) // 3rd switch up
   { stopNova();
-    lcd.setCursor(0,1);
-    lcd.print("     mt0 active");
+    lcdsetCursor(0,1);
+    lcdprint("     mt0 active");
     for(unsigned int a=0; a<65535*32; a++)
     { unsigned int v = random(65535); // a&1?0x5555:0xaaaa;
       unsigned int ad = 0; // a&16383;
@@ -1700,32 +1732,32 @@ void tests(int func)
       unsigned int c = examine(ad);
       digitalWrite(13, v!=c);
     }
-    lcd.setCursor(0,1);
-    lcd.print("mt0 ready      ");
+    lcdsetCursor(0,1);
+    lcdprint("mt0 ready      ");
   }
 
   // small memory test, address 0 only
   else if (func==3) // 4rd switch up
   { stopNova();
-    lcd.setCursor(0,1);
-    lcd.print("     mt1 active");
+    lcdsetCursor(0,1);
+    lcdprint("     mt1 active");
     for(unsigned int a=0; a<65535*32; a++)
     { deposit(0, 0); // drive inhibit
     }
-    lcd.setCursor(0,1);
-    lcd.print("mt1 ready      ");
+    lcdsetCursor(0,1);
+    lcdprint("mt1 ready      ");
   }
 
   // small memory test, address 0 only
   else if (func==4) // 5th switch up
   { stopNova();
-    lcd.setCursor(0,1);
-    lcd.print("     mt2 active");
+    lcdsetCursor(0,1);
+    lcdprint("     mt2 active");
     for(unsigned int a=0; a<65535*32; a++)
     { deposit(0, 0xffff); // no inhibits driven
     }
-    lcd.setCursor(0,1);
-    lcd.print("mt2 ready      ");
+    lcdsetCursor(0,1);
+    lcdprint("mt2 ready      ");
   }
   else if (func==5) // test write/read all memory
   { while(1) {
@@ -1742,8 +1774,8 @@ void tests(int func)
   }
   else if (func==6) // Continue passing virtual switches
   { continueNovaSw(0x6666);
-    lcd.setCursor(0,1);
-    lcd.print("sent 6666 to READS");
+    lcdsetCursor(0,1);
+    lcdprint("sent 6666 to READS");
     delay(200);
   }
   else if (func==7) // Copy prog1..4 to NOVA
@@ -1753,14 +1785,14 @@ void tests(int func)
     assemble(0100, prog3);
     assemble(0140, prog4);
     // assemble(0400, prog4); // force PC relative addressing
-    lcd.setCursor(0,1);
-    lcd.print("loaded prog1..4");
+    lcdsetCursor(0,1);
+    lcdprint("loaded prog1..4");
     delay(200);
   }
   else if (func==8)
   { stopNova();
-    lcd.setCursor(0,1);
-    lcd.print("     mtfull active");
+    lcdsetCursor(0,1);
+    lcdprint("     mtfull active");
     for(unsigned int a=0; a<65535*32; a++)
     { unsigned int ad = a; // a&16383;
       while(ad>=memsize) ad-=memsize;
@@ -1771,8 +1803,8 @@ void tests(int func)
       digitalWrite(13, v!=c);
       deposit(ad, org);
     }
-    lcd.setCursor(0,1);
-    lcd.print("mtfull ready      ");
+    lcdsetCursor(0,1);
+    lcdprint("mtfull ready      ");
   }
 }
 
@@ -1845,24 +1877,23 @@ void processkey(short kbkey)
 
     if (noctal==0)
     { octalval=0;
-      lcd.setCursor(0,0);
-      lcd.print(makespc(40)); 
-      lcd.noCursor();
+      lcdclearline(0); 
+      lcdnoCursor();
       if (opmode==1)
         printHelp("* = goto");
       else
         printHelp("* = goto; 8 = backspace");
     }
 
-    lcd.setCursor(noctal,0);
-    lcd.print(kb); octalval = (opmode==1?10:8)*octalval+kb; noctal++; 
-    lcd.noCursor();
+    lcdsetCursor(noctal,0);
+    lcdprint(kb); octalval = (opmode==1?10:8)*octalval+kb; noctal++; 
+    lcdnoCursor();
   }
   else if (kbkey==8 && kbmode==1 && noctal>0 && opmode<3) // backspace in address mode
   { noctal--;
     octalval = octalval>>3;
-    lcd.setCursor(noctal,0);
-    lcd.print(" ");
+    lcdsetCursor(noctal,0);
+    lcdprint(" ");
   }
 
   else if (isoct && kbmode==2 && opmode==0)   //  octal key in edit data mode
@@ -1871,24 +1902,23 @@ void processkey(short kbkey)
     int pos=(5-noctal)*3;
     octalval = (octalval&(~(7<<pos)))+(kb<<pos); noctal++; 
     octalval = octalval & 0xffff;
-    lcd.setCursor(0,0);
+    lcdsetCursor(0,0);
     lcdPrintOctal(octaladdress);
-    lcd.print(":");
+    lcdprint(":");
     lcdPrintOctal(octalval);
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
+    lcdclearline(1);
+    lcdsetCursor(0,1);
     if (octaladdress<0xfffc) 
-    { lcd.print("      :");
-      lcd.print(lcdPrintDisas(octalval, 8));
+    { lcdprint("      :");
+      lcdprint(printDisas(octalval, 8));
     }
     else 
-    { lcd.print("ac");
-      lcd.print(octaladdress-0xfffc);
+    { lcdprint("ac");
+      lcdprint(octaladdress-0xfffc);
     }
     if (noctal>5) noctal=0;
-    lcd.setCursor(7+noctal,0);
-    lcd.cursor();
+    lcdsetCursor(7+noctal,0);
+    lcdcursor();
   }
 
   else if (isoct && kbmode==2 && opmode==1)   //  numeric key in decimal mode
@@ -1897,19 +1927,18 @@ void processkey(short kbkey)
     octalval = 10*octalval + kb;
     noctal++; 
     octalval = octalval & 0xffff;
-    lcd.setCursor(0,0);
+    lcdsetCursor(0,0);
     lcdPrintDecimal(octaladdress);
-    lcd.print(":");
-    lcd.print(octalval);
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
+    lcdprint(":");
+    lcdprint(octalval);
+    lcdclearline(1);
+    lcdsetCursor(0,1);
     if (octaladdress>=0xfffc) 
-    { lcd.print("ac");
-      lcd.print(octaladdress-0xfffc);
+    { lcdprint("ac");
+      lcdprint(octaladdress-0xfffc);
     }
     if (noctal>6) noctal=0;
-    lcd.noCursor();
+    lcdnoCursor();
   }
 
   else if (isoct && kbmode==2 && opmode==2)   //  octal key in assembly mode
@@ -1918,32 +1947,31 @@ void processkey(short kbkey)
     int pos=(6-noctal)*3;
     octalval = (octalval&(~((unsigned long)7<<pos)))+(kb<<pos); noctal++; 
     octalval = octalval & 0xffffff;
-    lcd.setCursor(0,0);
+    lcdsetCursor(0,0);
     lcdPrintOctal(octaladdress);
-    lcd.print(":");
+    lcdprint(":");
     lcdPrintLongOctal(octalval);
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
+    lcdclearline(1);
+    lcdsetCursor(0,1);
     if (octaladdress<0xfffc) 
-    lcd.print("      :");
-    lcd.print(lcdPrintMiniDisas(octalval, 8));
+    lcdprint("      :");
+    lcdprint(printMiniDisas(octalval, 8));
     if (noctal>6) noctal=0;
     printAssemblyHelp(octalval, noctal);
-    lcd.setCursor(7+noctal,0);
-    lcd.cursor();
+    lcdsetCursor(7+noctal,0);
+    lcdcursor();
   }
 
   else if (kbkey==8 && kbmode==2 && opmode<=2)  // arrow back data mode
   { if (noctal==0) noctal=opmode?6:5; else noctal--;
-    lcd.setCursor(7+noctal,0);
-    lcd.cursor();
+    lcdsetCursor(7+noctal,0);
+    lcdcursor();
     if (opmode==2) printAssemblyHelp(octalval, noctal);
   }
   else if (kbkey==9 && kbmode==2 && opmode<=2)  // arrow forward data mode
   { noctal++; if (noctal>(opmode?6:5)) noctal=0;
-    lcd.setCursor(7+noctal,0);
-    lcd.cursor();
+    lcdsetCursor(7+noctal,0);
+    lcdcursor();
     if (opmode==2) printAssemblyHelp(octalval, noctal);
   }
 
@@ -1954,33 +1982,33 @@ void processkey(short kbkey)
     else if (noctal==0) octaladdress++;
     else if (noctal==1 && octalval<4) octaladdress = 0xfffc + (octalval&3);
     else octaladdress = octalval;
-    lcd.setCursor(0,0);
+	lcdclearline(0);
+
+    lcdsetCursor(0,0);
     if (opmode==1)
       lcdPrintDecimal(octaladdress); 
     else
       lcdPrintOctal(octaladdress); 
     stopNova();
-    lcd.print(":"); 
+    lcdprint(":"); 
     if (opmode==1)
       lcdPrintDecimal(examine(octaladdress));
     else
       lcdPrintOctal(examine(octaladdress));
-    lcd.print(makespc(40)); 
     kbmode=1;
     noctal=0;
     octalval=0;
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
+    lcdclearline(1);
+    lcdsetCursor(0,1);
     if (octaladdress<0xfffc) 
-    { lcd.print("      :"); 
-      lcd.print(lcdPrintDisas(examine(octaladdress), 8));
+    { lcdprint("      :"); 
+      lcdprint(printDisas(examine(octaladdress), 8));
     }
     else 
-    { lcd.print("ac");
-      lcd.print(octaladdress-0xfffc);
+    { lcdprint("ac");
+      lcdprint(octaladdress-0xfffc);
     }
-    lcd.noCursor();
+    lcdnoCursor();
     if (opmode==0 or opmode==2) printHelp("*/8 = next/prev address; # = edit");
     if (opmode==1) printHelp("* = next address; # = edit");
     if (opmode==3) printHelp("#=step, 8=step back");
@@ -1991,98 +2019,93 @@ void processkey(short kbkey)
     kbmode = 2;
     noctal=0;
     octalval = examine(octaladdress);
-    lcd.setCursor(0,0);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,0);
+    lcdclearline(0);
+    lcdsetCursor(0,0);
     lcdPrintOctal(octaladdress); 
-    lcd.print(":"); 
+    lcdprint(":"); 
     lcdPrintOctal(octalval);
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
+    lcdclearline(1);
+    lcdsetCursor(0,1);
     if (octaladdress<0xfffc) 
-    { lcd.print("      :"); 
-      lcd.print(lcdPrintDisas(examine(octaladdress), 8));
+    { lcdprint("      :"); 
+      lcdprint(printDisas(examine(octaladdress), 8));
     }
     else 
-    { lcd.print("ac");
-      lcd.print(octaladdress-0xfffc);
+    { lcdprint("ac");
+      lcdprint(octaladdress-0xfffc);
     }
     printHelp("8/9 = left/right; # = store; * = cancel");
-    lcd.setCursor(7+noctal,0);
-    lcd.cursor();
+    lcdsetCursor(7+noctal,0);
+    lcdcursor();
   }
   else if (kbkey==12 && kbmode<2 && opmode==1)  // # = start decimal edit mode
   { kbmode = 2;
     noctal=0;
     //octalval = examine(octaladdress);
     octalval=0;
-    lcd.setCursor(0,0);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,0);
+    lcdclearline(0);
+    lcdsetCursor(0,0);
     lcdPrintDecimal(octaladdress); 
-    lcd.print(":"); 
-    lcd.print(octalval);
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
+    lcdprint(":"); 
+    lcdprint(octalval);
+    lcdclearline(1);
+    lcdsetCursor(0,1);
     stopNova();
     if (octaladdress<0xfffc) 
-    { lcd.print("      :"); 
-      lcd.print(lcdPrintDisas(examine(octaladdress), 8));
+    { lcdprint("      :"); 
+      lcdprint(printDisas(examine(octaladdress), 8));
     }
     else 
-    { lcd.print("ac");
-      lcd.print(octaladdress-0xfffc);
+    { lcdprint("ac");
+      lcdprint(octaladdress-0xfffc);
     }
     printHelp("decimal mode # = store; * = cancel");
-    //lcd.setCursor(6+noctal,0);
-    lcd.noCursor();
+    //lcdsetCursor(6+noctal,0);
+    lcdnoCursor();
   }
   else if (kbkey==12 && kbmode==2 && (opmode==0 or opmode==2))  // # = edit mode deposit
   { if (opmode==2) octalval=packassemble(octalval);
     stopNova();
     deposit(octaladdress, octalval);
-    lcd.setCursor(0,0);
+    lcdclearline(0);
+	lcdsetCursor(0,0);
     lcdPrintOctal(octaladdress); 
-    lcd.print("<"); 
+    lcdprint("<"); 
     lcdPrintOctal(examine(octaladdress));
-    lcd.print(makespc(40)); 
     kbmode=1;
     noctal=0;
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
+    lcdclearline(1);
+    lcdsetCursor(0,1);
     if (octaladdress<0xfffc) 
-    { lcd.print("      <");
-      lcd.print(lcdPrintDisas(examine(octaladdress), 8));
+    { lcdprint("      <");
+      lcdprint(printDisas(examine(octaladdress), 8));
     }
     else 
-    { lcd.print(" ac");
-      lcd.print(octaladdress-0xfffc);
+    { lcdprint(" ac");
+      lcdprint(octaladdress-0xfffc);
     }
     printHelp("");
-    lcd.noCursor();
+    lcdnoCursor();
   }
   else if (kbkey==12 && kbmode==2 && opmode==1)   // # = decimal mode deposit
   { stopNova();
     deposit(octaladdress, octalval);
-    lcd.setCursor(0,0);
+    lcdclearline(0);
+	lcdsetCursor(0,0);
     lcdPrintDecimal(octaladdress); 
-    lcd.print("<"); 
+    lcdprint("<"); 
     lcdPrintDecimal(examine(octaladdress));
-    lcd.print(makespc(40)); 
+    lcdprint(makespc(40)); 
     kbmode=1;
     noctal=0;
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
+    lcdclearline(1);
+    lcdsetCursor(0,1);
     if (octaladdress>=0xfffc) 
-    { lcd.print(" ac");
-      lcd.print(octaladdress-0xfffc);
+    { lcdprint(" ac");
+      lcdprint(octaladdress-0xfffc);
     }
     printHelp("");
-    lcd.noCursor();
+    lcdnoCursor();
   }
   else if (kbkey==12 && kbmode<2 && opmode==2)   // # = start assembly mode
   { stopNova();
@@ -2090,20 +2113,18 @@ void processkey(short kbkey)
     noctal=0;
     octalval = examine(octaladdress);
     octalval=unpackassemble(octalval);
-    lcd.setCursor(0,0);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,0);
+    lcdclearline(0);
+    lcdsetCursor(0,0);
     lcdPrintOctal(octaladdress); 
-    lcd.print(":"); 
+    lcdprint(":"); 
     lcdPrintLongOctal(octalval);
-    lcd.setCursor(0,1);
-    lcd.print(makespc(40));
-    lcd.setCursor(0,1);
-    lcd.print("      :"); 
-    lcd.print(lcdPrintMiniDisas(octalval, 8));
+    lcdclearline(1);
+    lcdsetCursor(0,1);
+    lcdprint("      :"); 
+    lcdprint(printMiniDisas(octalval, 8));
     printAssemblyHelp(octalval, noctal);
-    lcd.setCursor(7+noctal,0);
-    lcd.cursor();
+    lcdsetCursor(7+noctal,0);
+    lcdcursor();
   }
   else if (opmode==3 && kbkey==12)      // step instruction
   { stopNova();
@@ -2111,7 +2132,7 @@ void processkey(short kbkey)
     kbmode=0;
     noctal=0;
     octalval=0;
-    lcd.noCursor();
+    lcdnoCursor();
     stepNova();
     lcdPrintDebug();
     debugging=1;
@@ -2121,13 +2142,13 @@ void processkey(short kbkey)
     octaladdress = prevpc;
     prevpc = octaladdress-1;
     examine(octaladdress);
-    lcd.setCursor(0,1);
+    lcdsetCursor(0,1);
     lcdPrintDebug(); 
-    lcd.noCursor();
+    lcdnoCursor();
     kbmode=1;
     noctal=0;
     octalval=0;
-    lcd.noCursor();
+    lcdnoCursor();
   }
   else if (opmode==5 && kbkey>0)  // io mode
   { unsigned int a, kb=kbkey;
@@ -2154,12 +2175,12 @@ void processkey(short kbkey)
   }
   else if (kbmode<3 && kbkey==9)      // select opmode
   { kbmode = 3;
-    lcd.setCursor(0, 1);
-    lcd.print("0-9=exa dec as dbg su io tst sav lod run");
+    lcdsetCursor(0, 1);
+    lcdprint("0-9=exa dec as dbg su io tst sav lod run");
     printHelp("Select run mode");
     while(readKeyBoard()!=0);
     delay(50);
-    lcd.noCursor();
+    lcdnoCursor();
   }
   else if (kbmode==3 && kbkey>0)      // select opmode
   { int kb=kbkey;
@@ -2173,37 +2194,36 @@ void processkey(short kbkey)
       { printHelp(F("STOP")); octaladdress=stopNova(); return; }
     }
     
-    lcd.setCursor(0, 1);
-    lcd.print(makespc(40));
+    lcdclearline(1);
     if (opmode==0) printHelp(F("N*=AC NN*=exam mem #=edit 9=setup"));
     if (opmode==1) printHelp(F("N*=AC NN*=exam mem #=edit dec 9!=setup"));
     if (opmode==2) printHelp(F("N*=AC NN*=exam mem #=edit asm 9=setup"));
     if (opmode==3) printHelp(F("debug #=step 8=step back 9=setup"));
     if (opmode==4) printHelp(F("setup unused"));
-    if (opmode==5) { printHelp(F("I/O mode 9(long)=exit")); lcd.clear(); }
-    if (opmode==6) { printHelp(F("0=regtest 1=dmp 2-5=mtst 7=pld 8=fullmtst")); lcd.clear(); }
-    if (opmode==7) { printHelp(F("Save core to eeprom bank N")); lcd.clear(); }
-    if (opmode==8) { printHelp(F("Load core from eeprom bank N")); lcd.clear(); }
-    lcd.noCursor();
+    if (opmode==5) { printHelp(F("I/O mode 9(long)=exit")); lcdclear(); }
+    if (opmode==6) { printHelp(F("0=regtest 1=dmp 2-5=mtst 7=pld 8=fullmtst")); lcdclear(); }
+    if (opmode==7) { printHelp(F("Save core to eeprom bank N")); lcdclear(); }
+    if (opmode==8) { printHelp(F("Load core from eeprom bank N")); lcdclear(); }
+    lcdnoCursor();
   }
   else if (opmode==4 && kbkey>0)      // setup (not used)
   { int kb=kbkey;
     if (kb==11) kb=0;
-    lcd.clear();
+    lcdclear();
     kbmode = 0;
     opmode = 0;
     printHelp("");
-    lcd.noCursor();
+    lcdnoCursor();
   }
   else if (opmode==6 && kbkey>0)      // test menu
   { int kb=kbkey;
     if (kb==11) kb=0;
     tests(kb);
-    lcd.clear();
+    lcdclear();
     kbmode = 0;
     opmode = 0;
     printHelp("");
-    lcd.noCursor();
+    lcdnoCursor();
   }
   else if (opmode==7 && kbkey>0)      // save core
   { int kb=kbkey;
@@ -2214,11 +2234,11 @@ void processkey(short kbkey)
       for (unsigned int i=0; i<core_lengths[kb]; i++) 
         writeBlocktoEEPROM(b+i, i*64);
     }
-    lcd.clear();
+    lcdclear();
     kbmode = 0;
     opmode = 0;
     printHelp("");
-    lcd.noCursor();
+    lcdnoCursor();
   }
   else if (opmode==8 && kbkey>0)      // load core
   { int kb=kbkey;
@@ -2229,18 +2249,82 @@ void processkey(short kbkey)
       for (unsigned int i=0; i<core_lengths[kb]; i++) 
         readBlockfromEEPROM(b+i, i*64);
     }
-    lcd.clear();
+    lcdclear();
     kbmode = 0;
     opmode = 0;
     printHelp("");
-    lcd.noCursor();
+    lcdnoCursor();
   }
   else if (kbkey>0)       // unrecognised key
   { kbmode=0;
     noctal=0;
     octalval=0;
-    lcd.noCursor();
+    lcdnoCursor();
   }
+}
+
+// Array with contents of punched tape; there is space for several tapes
+#include "novabasic1.tape.h"
+
+String tapeloader(const unsigned char*p, int len, String name)
+{  Serial.println("Loading 'tape' from code memory: "+name);
+   //Serial.println("Block:Address");
+   int i=0, startaddress=0xffff;
+   i=0;
+
+   // skip zero preamble
+   while (i<len)
+   { if (p[i]!=0) break;
+     i++;
+   }
+   while (i<len)
+   { short wc = p[i] + p[i+1]*256;
+     wc = -wc;
+     i+=2;
+
+     // data block
+     if (wc>0 && wc<=16)
+     { short adr = p[i] + p[i+1]*256;
+       Serial.println(toOct(wc)+':'+toOct(adr));
+       i+=2;
+       //short cs = p[i] + p[i+1]*256;
+       i+=2;
+       for (int j=0; j<wc; j++)
+       { short data = p[i] + p[i+1]*256;
+         deposit(adr+j, data);
+         i+=2;
+       }
+     }
+     // constant block
+     else if (wc>16 && wc <= 32767)
+     { short adr = p[i] + p[i+1]*256;
+       Serial.println(toOct(wc)+' '+toOct(adr));
+       i+=2;
+       //short cs = p[i] + p[i+1]*256;
+       i+=2;
+       short data = p[i] + p[i+1]*256;
+       i+=2;
+       for (int j=0; j<wc; j++)
+       { deposit(adr+j, data);
+       }
+     }
+     // start address block
+     else if (wc == -1)
+     { unsigned short adr = p[i] + p[i+1]*256;
+       startaddress = adr;
+              
+       i+=2;
+       i+=2;
+       break;
+     }
+   }
+
+   if (startaddress<32768) 
+   { Serial.println("start adress "+toOct(startaddress));
+     return "run "+toOct(startaddress);
+   }
+
+   return "";
 }
 
 // ------------------------------------------------------------
@@ -2252,6 +2336,9 @@ String("acN [ val]            read/write register\r\n")+
 String("pc [ val]             read/write program counter\r\n")+
 String("reg                   show all registers, pc and carry\r\n")+
 String("mem addr [ val]       read/write memory location\r\n")+
+String("Kaddr/val             write memory location(s)\r\n")+
+String("val                   write next\r\n")+
+String("K                     stop write mode\r\n")+
 String("dump address[ length] dump memory\r\n")+
 String("list address[ length] list assembly (numbers are octal)\r\n")+
 String("asm addr INST         assemble to memory (slow, INST exactly as disassembled)\r\n")+
@@ -2344,6 +2431,9 @@ int nhist=0;
 bool InteractiveDebugger=false;     // if set serial debugger is more interactive
 #endif
 
+bool kmode=false;
+int kaddress=0;
+
 void processSerial(int count)
 { byte b = Serial.read();
   char m[50];
@@ -2414,20 +2504,20 @@ void processSerial(int count)
       case 'Y': memstepNova(); break;
       case 'O': continueNova(); break;
       case 'o': Serial.readBytes(m, 4); // continue put data on switches
-                continueNovaSw(makehex(m,4)); 
+                continueNovaSw(readHex(m,4)); 
                 break;
       case 'G': Serial.readBytes(m, 4);
-                startNova(makehex(m,4));
+                startNova(readHex(m,4));
                 break;
       case 'M': Serial.readBytes(m, 4); // read one Memory location 
-                Serial.println(toHex(examine(makehex(m,4)))); 
+                Serial.println(toHex(examine(readHex(m,4)))); 
                 break;
       case 'D': Serial.readBytes(m, 8); // Deposit one memory location
-                deposit(makehex(m,4), makehex(m+4,4)); break;
+                deposit(readHex(m,4), readHex(m+4,4)); break;
       case 'E': Serial.readBytes(m, 1); // Examine AC
                 Serial.println(toHex(examineAC(m[0]-'0'))); break;
       case 'F': Serial.readBytes(m, 5); // Fill AC
-                depositAC(m[0]-'0', makehex(m+1,4)); break;
+                depositAC(m[0]-'0', readHex(m+1,4)); break;
       case 'X': Serial.readBytes(m, 1); // Read frontpanel LEDs
                 if (m[0]=='0') Serial.println(toHex(readData())); 
                 if (m[0]=='1') Serial.println(toHex(readAddr())); 
@@ -2435,10 +2525,10 @@ void processSerial(int count)
                 break;
       case 'L': {int l=Serial.readBytesUntil(0x0d, m, 42); // write LCD text
                 if (m[0]=='0') 
-                { lcd.setCursor(0, m[1]-'0');
-                  lcd.print(makespc(40));
-                  lcd.setCursor(0, m[1]-'0');
-                  for (int i=2; i<l; i++) lcd.write(char(m[i]));
+                { lcdsetCursor(0, m[1]-'0');
+                  lcdprint(makespc(40));
+                  lcdsetCursor(0, m[1]-'0');
+                  for (int i=2; i<l; i++) lcdwrite(char(m[i]));
                 }
                 if (m[0]=='1') 
                 { lcd2.setCursor(0, m[1]-'0');
@@ -2450,16 +2540,16 @@ void processSerial(int count)
                 }
       case ':': { // write set of memory locations
                 Serial.readBytes(m, 6);
-                unsigned short n = makehex(m,2);
-                unsigned short a=makehex(m+2,4);
+                unsigned short n = readHex(m,2);
+                unsigned short a=readHex(m+2,4);
                 Serial.readBytes(m, n*4); 
-                for (unsigned short i=0; i<n; i++) deposit(a++, makehex(m+i*4,4));
+                for (unsigned short i=0; i<n; i++) deposit(a++, readHex(m+i*4,4));
                 break;
                 }
       case '?': { // read set of memory locations
                 Serial.readBytes(m, 6);
-                unsigned short n = makehex(m,2);
-                unsigned short a=makehex(m+2,4);
+                unsigned short n = readHex(m,2);
+                unsigned short a=readHex(m+2,4);
                 for (unsigned short i=0; i<n; i++) 
                   if ((i&7)==7) Serial.println(toHex(examine(a++))); 
                   else Serial.print(toHex(examine(a++)));
@@ -2467,14 +2557,14 @@ void processSerial(int count)
                 }
       case 'l': { // disassemble memory locations
                 Serial.readBytes(m, 6);
-                unsigned short n = makehex(m,2);
-                unsigned short a = makehex(m+2,4);
+                unsigned short n = readHex(m,2);
+                unsigned short a = readHex(m+2,4);
                 for (unsigned short i=0; i<n; i++)
                 { Serial.print(toOct(a));
                   unsigned short v=examine(a++);
                   Serial.print(" ");
                   Serial.print(toOct(v));
-                  Serial.println(lcdPrintDisas(v, OCT));
+                  Serial.println(printDisas(v, OCT));
                 }
                 break;
                 }
@@ -2491,15 +2581,15 @@ void processSerial(int count)
                 break;
       case '/': SerialIO=true; // enter IO mode
                 Serial.println("IO mode; @=exit");
-                lcd.setCursor(0, 0);
-                lcd.print(makespc(40));
-                lcd.setCursor(0, 1);
-                lcd.print(makespc(40));
-                lcd.setCursor(0, 0);
+                lcdsetCursor(0, 0);
+                lcdprint(makespc(40));
+                lcdsetCursor(0, 1);
+                lcdprint(makespc(40));
+                lcdsetCursor(0, 0);
                 break;
       case 'e': { // read 128 byte block a from eeprom
                 Serial.readBytes(m, 4);
-                unsigned short a=makehex(m,4);
+                unsigned short a=readHex(m,4);
                 int deviceaddress = 0x53;                  
                 if (a>515) deviceaddress+=4;
                 for (short i=0; i<128; i++)
@@ -2512,13 +2602,13 @@ void processSerial(int count)
                 }
       case 'w': { // write 16 byte part n(0..7) of 128 byte block a to eeprom
                 Serial.readBytes(m, 5);
-                unsigned short n = makehex(m,1);
-                unsigned short a=makehex(m+1,4);
+                unsigned short n = readHex(m,1);
+                unsigned short a=readHex(m+1,4);
                 int deviceaddress = 0x53;
                 if (a>515) deviceaddress+=4;
                 Serial.readBytes(m, 32);
                 m[32]=m[33]='0';
-                for (short i=0; i<16; i++) m[i]=makehex(m+i*2,2);
+                for (short i=0; i<16; i++) m[i]=readHex(m+i*2,2);
                 if (a<4) for (short j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
                 else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
                 break;
@@ -2619,18 +2709,38 @@ void processSerial(int count)
       { Serial.println(helpstring);
       }
 
+      // Nova virtual console deposit (Kaddress/data)
+      else if (line.startsWith("K"))
+      { int pos1 = 1;
+        int pos2 = line.indexOf('/', 0);
+        if (pos2<0)
+        { kmode=false;
+        }
+        else
+        { int a = readOct(line, pos1);
+          int b = readOct(line, pos2+1);
+          deposit(a, b);
+          kmode=true;
+          kaddress=a+1;
+        }
+      }
+      else if (kmode && line[0]>'0' && line[0]<='7')
+      { int b=readOct(line, 0);
+        deposit(kaddress, b);
+        kaddress++;
+      }
       // disassemble
       else if (line.startsWith("list "))
       { int pos1 = 5;
         int pos2 = line.indexOf(' ', 6);
-        unsigned short a = makeoct(line, pos1);
-        int b = pos2<0 ? 16 : makeoct(line, pos2+1);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 16 : readOct(line, pos2+1);
         for (unsigned short i=0; i<b; i++)
         { Serial.print(toOct(a));
           unsigned short v=examine(a++);
           Serial.print(" ");
           Serial.print(toOct(v));
-          Serial.println(lcdPrintDisas(v, OCT));
+          Serial.println(printDisas(v, OCT));
         }
         nextcmd = "list "+toOct(a)+" "+toOct(b);
         examine(pc);
@@ -2640,8 +2750,8 @@ void processSerial(int count)
       else if (line.startsWith("dump "))
       { int pos1 = 5;
         int pos2 = line.indexOf(' ', 6);
-        unsigned short a = makeoct(line, pos1);
-        int b = pos2<0 ? 16 : makeoct(line, pos2+1);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 16 : readOct(line, pos2+1);
         for (unsigned short i=0; i<b; i++)
         { Serial.print(toOct(a));
           unsigned short v=examine(a++);
@@ -2660,17 +2770,17 @@ void processSerial(int count)
       else if (line.startsWith("ac"))
       { int pos1 = 2;
         int pos2 = line.indexOf(' ', 3);
-        unsigned short a = makeoct(line, pos1);
-        if (pos2>=0) depositAC(a, makeoct(line, pos2+1));
+        unsigned short a = readOct(line, pos1);
+        if (pos2>=0) depositAC(a, readOct(line, pos2+1));
         Serial.println("ac"+String(a)+" = "+toOct(examineAC(a)));
-        if (pos2>=0) nextcmd = "ac"+String((a+1)%4)+" "+toOct(makeoct(line, pos2+1));
+        if (pos2>=0) nextcmd = "ac"+String((a+1)%4)+" "+toOct(readOct(line, pos2+1));
         else nextcmd = "ac"+String((a+1)%4);
       }
 
       // read or set pc
       else if (line.startsWith("pc"))
       { int pos2 = line.indexOf(' ', 2);
-        if (pos2>=0) examine(makeoct(line, pos2+1));
+        if (pos2>=0) examine(readOct(line, pos2+1));
         Serial.println("pc = "+toOct(readAddr()&0x7fff));
         nextcmd = "step";
       }
@@ -2688,11 +2798,11 @@ void processSerial(int count)
       else if (line.startsWith("mem "))
       { int pos1 = 4;
         int pos2 = line.indexOf(' ', 5);
-        unsigned short a = makeoct(line, pos1);
-        if (pos2>=0) deposit(a, makeoct(line, pos2+1));
+        unsigned short a = readOct(line, pos1);
+        if (pos2>=0) deposit(a, readOct(line, pos2+1));
         Serial.println("mem "+toOct(a)+" = "+toOct(examine(a)));
         examine(pc);
-        if (pos2>=0) nextcmd = "mem "+toOct(a+1)+" "+toOct(makeoct(line, pos2+1));
+        if (pos2>=0) nextcmd = "mem "+toOct(a+1)+" "+toOct(readOct(line, pos2+1));
         else nextcmd = "mem "+toOct(a+1);
       }
 
@@ -2700,7 +2810,7 @@ void processSerial(int count)
       else if (line.startsWith("asm "))
       { int pos1 = 4;
         int pos2 = line.indexOf(' ', 5);
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         if (pos2>=0) {
           String t=line.substring(pos2).toLowerCase();
 
@@ -2723,13 +2833,13 @@ void processSerial(int count)
             }
             else
             { pos3 = t.indexOf(' ', 4);
-              unsigned short b = makeoct(t, pos3+1);
+              unsigned short b = readOct(t, pos3+1);
               deposit(a, b);
             }
           }
 
           else for(int b=0; b<=65535;)
-          { String s = lcdPrintDisas(b, OCT).toLowerCase();
+          { String s = printDisas(b, OCT).toLowerCase();
             if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
               b+=63; 
             // must be different instruction (all coded in high 10 bits)
@@ -2746,14 +2856,14 @@ void processSerial(int count)
         unsigned short v=examine(a++);
         Serial.print(" ");
         Serial.print(toOct(v));
-        Serial.println(lcdPrintDisas(v, OCT));
+        Serial.println(printDisas(v, OCT));
         examine(pc);
       }
 
       // run without serial IO
       else if (line.startsWith("go "))
       { int pos1 = 3;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         startNova(a);
         Serial.println("running");
         nextcmd = "stop";
@@ -2763,7 +2873,7 @@ void processSerial(int count)
       else if (line.startsWith("run "))
       { int pos1 = 4;
         SerialIO=true;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         startNova(a);
         Serial.println("running, use @ to return to command mode");
         nextcmd = "stop";
@@ -2810,9 +2920,9 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', 6);
         int pos3 = line.indexOf(' ', pos2+1);
         if (pos2>=0 && pos3>=0)
-        { unsigned short a = makeoct(line, pos1);
-          unsigned short b = makeoct(line, pos2+1);
-          unsigned short c = makeoct(line, pos3+1);
+        { unsigned short a = readOct(line, pos1);
+          unsigned short b = readOct(line, pos2+1);
+          unsigned short c = readOct(line, pos3+1);
           unsigned short s=a;
           for (int block=b; block<b+c; block++,a+=64)
             readBlockfromEEPROM(block, a);
@@ -2843,9 +2953,9 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', 6);
         int pos3 = line.indexOf(' ', pos2+1);
         if (pos2>=0 && pos3>=0)
-        { unsigned short a = makeoct(line, pos1);
-          unsigned short b = makeoct(line, pos2+1);
-          unsigned short c = makeoct(line, pos3+1);
+        { unsigned short a = readOct(line, pos1);
+          unsigned short b = readOct(line, pos2+1);
+          unsigned short c = readOct(line, pos3+1);
           unsigned short s=a;
           for (int block=b; block<b+c; block++,a+=64)
             writeBlocktoEEPROM(block, a);
@@ -2871,7 +2981,7 @@ void processSerial(int count)
       // debug step
       else if (line.startsWith("step"))
       { int pos2 = line.indexOf(' ', 4);
-        unsigned short a = pos2>0 ? makeoct(line, pos2+1) : 1;
+        unsigned short a = pos2>0 ? readOct(line, pos2+1) : 1;
         for (int i=0; i<a; i++) {
           serialDebug(1);
           serialDebug(2); 
@@ -2892,7 +3002,7 @@ void processSerial(int count)
       // run test function (may not return)
       else if (line.startsWith("test "))
       { int pos1 = 5;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         tests(a);
       }
 
@@ -2901,12 +3011,12 @@ void processSerial(int count)
       { int pos1 = 4;
         int pos2 = line.indexOf(' ', pos1+1);
         if (pos2>=0)
-        { unsigned short a = makeoct(line, pos1);
+        { unsigned short a = readOct(line, pos1);
           if (a<2) 
-          { lcd.setCursor(0, a);
-            lcd.print(makespc(40));
-            lcd.setCursor(0, a);
-            for (unsigned int i=pos2+1; i<line.length(); i++) lcd.write(line[i]);
+          { lcdsetCursor(0, a);
+            lcdprint(makespc(40));
+            lcdsetCursor(0, a);
+            for (unsigned int i=pos2+1; i<line.length(); i++) lcdwrite(line[i]);
           }
           else
           { lcd2.setCursor(0, a-2);
@@ -2921,7 +3031,7 @@ void processSerial(int count)
       // program leds
       else if (line.startsWith("led "))
       { int pos1 = 4;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         gpio(a & 255);
         digitalWrite(13, (a>>8)&1);
         digitalWrite(12, (a>>9)&1);
@@ -2932,7 +3042,7 @@ void processSerial(int count)
       // program DAC
       else if (line.startsWith("dac "))
       { int pos1 = 4;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         analogWrite(A14, a);
         nextcmd = "dac "+toOct(a+1);
       }
@@ -2953,7 +3063,7 @@ void processSerial(int count)
       // list eeprom block in hex
       else if (line.startsWith("eeprom "))
       { int pos1 = 7;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         int deviceaddress = 0x53;                  
         if (a>515) deviceaddress+=4;
         for (short i=0; i<128; i++)
@@ -2968,7 +3078,7 @@ void processSerial(int count)
       // list memory block in hex
       else if (line.startsWith("memory "))
       { int pos1 = 7;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         for (short i=0; i<64; i++)
         { String s;
           s = toHex(examine(a+i));
@@ -2983,9 +3093,9 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', 7);
         int pos3 = line.indexOf(' ', pos2+1);
         if (pos2>=0)
-        { unsigned short a = makeoct(line, pos1);
-          unsigned short b = makeoct(line, pos2+1);
-          unsigned short c = pos3<0 ? 0 : makeoct(line, pos3+1);
+        { unsigned short a = readOct(line, pos1);
+          unsigned short b = readOct(line, pos2+1);
+          unsigned short c = pos3<0 ? 0 : readOct(line, pos3+1);
           unsigned short s=a;
           for (int i=0; i<b; i++)
             deposit(s+i, c);
@@ -3000,20 +3110,20 @@ void processSerial(int count)
       // load hex data to memory
       else if (line.startsWith(":"))
       { line.toCharArray(m, 50);
-        unsigned short n = makehex(m+1,2);
-        unsigned short a=makehex(m+3,4);
-        if (n<=10) for (unsigned short i=0; i<n; i++) deposit(a++, makehex(m+7+i*4,4));
+        unsigned short n = readHex(m+1,2);
+        unsigned short a=readHex(m+3,4);
+        if (n<=10) for (unsigned short i=0; i<n; i++) deposit(a++, readHex(m+7+i*4,4));
         nextcmd = "";
       }
 
       // load hex data (16 bytes) to eeprom
       else if (line.startsWith(";"))
       { line.toCharArray(m, 50);
-        unsigned short n = makehex(m+1,1);
-        unsigned short a=makehex(m+2,4);
+        unsigned short n = readHex(m+1,1);
+        unsigned short a=readHex(m+2,4);
         int deviceaddress = 0x53;
         if (a>515) deviceaddress+=4;
-        for (short i=0; i<16; i++) m[i]=makehex(m+6+i*2,2);
+        for (short i=0; i<16; i++) m[i]=readHex(m+6+i*2,2);
         if (a<4) for (short j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
         else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
 	      nextcmd = "";
@@ -3045,8 +3155,8 @@ void processSerial(int count)
       else if (line.startsWith("vis "))
       { int pos1 = 4;
         int pos2 = line.indexOf(' ', 5);
-        unsigned short a = makeoct(line, pos1);
-        int b = pos2<0 ? 1600 : makeoct(line, pos2+1);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 1600 : readOct(line, pos2+1);
         for (unsigned short i=0; i<b; i++)
         { unsigned short v=examine(a++);
           char visual[]=" .:-=+*#%@";
@@ -3064,8 +3174,8 @@ void processSerial(int count)
       else if (line.startsWith("plot "))
       { int pos1 = 5;
         int pos2 = line.indexOf(' ', 6);
-        unsigned short a = makeoct(line, pos1);
-        int b = pos2<0 ? 32767 : makeoct(line, pos2+1);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 32767 : readOct(line, pos2+1);
         short vals[80];
         for (unsigned short i=0; i<80; i++) 
           vals[i] = examine(a++);
@@ -3085,7 +3195,7 @@ void processSerial(int count)
       // write serial character
       else if (line.startsWith("serw "))
       { int pos1 = 5;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         Serial2.write(a);
         nextcmd = "serw "+toOct(a+1);
       }
@@ -3093,7 +3203,7 @@ void processSerial(int count)
       // set front panel switches
       else if (line.startsWith("fp "))
       { int pos1 = 3;
-        unsigned short a = makeoct(line, pos1);
+        unsigned short a = readOct(line, pos1);
         CurrentSwitchValue=a;
       }
 
@@ -3101,6 +3211,19 @@ void processSerial(int count)
       else if (line.startsWith("tape "))
       { int pos1 = 5;
         String filename = line.substring(pos1, 99).toUpperCase(); // +"@";
+
+        // absolute tape loader using program data
+        if (filename==".BASIC")
+        { nextcmd=tapeloader(basictape, sizeof(basictape), ".basic");
+          Serial.print(">");
+          line = "";
+          return;
+        }
+		
+        if (filename=="LIST")
+        { Serial.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
+        }
+
         byte fname[16], ename[16];
         filename.getBytes(fname, 16);
         int deviceaddress = 0x53;                  
@@ -3153,7 +3276,7 @@ void processSerial(int count)
             { short adr = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
               Serial.println(toOct(wc)+':'+toOct(adr));
               i+=2;
-              short cs = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+              //short cs = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
               i+=2;
               for (int j=0; j<wc; j++)
               { short data = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
@@ -3166,7 +3289,7 @@ void processSerial(int count)
             { short adr = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
               Serial.println(toOct(wc)+' '+toOct(adr));
               i+=2;
-              short cs = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
+              //short cs = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
               i+=2;
               short data = i2c_eeprom_read_byte(deviceaddress, a+i) + i2c_eeprom_read_byte(deviceaddress, a+i+1)*256;
               i+=2;
@@ -3270,17 +3393,17 @@ int kbkey=0;                        // detected key 1..12 on keypad
 // write character to LCD interpreting minimal control codes
 void putLCD(byte b)
 { lcdpos = lcdpos % 160;
-  if      (b==12) { lcd.clear(); lcd2.clear(); lcdpos=0; }
+  if      (b==12) { lcdclear(); lcd2.clear(); lcdpos=0; }
   else if (b==13) { lcdpos = lcdpos - lcdpos%40; clearline=true; }
   else if (b==10) { lcdpos = lcdpos + 40; clearline=true; }
   else 
   { if (lcdpos<80)
-    { lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+    { lcdsetCursor(lcdpos%40, floor(lcdpos/40));
       if (clearline) 
-      { for (int i=0; i<40; i++) lcd.write(' ');
-        lcd.setCursor(lcdpos%40, floor(lcdpos/40));
+      { for (int i=0; i<40; i++) lcdwrite(' ');
+        lcdsetCursor(lcdpos%40, floor(lcdpos/40));
       }
-      lcd.write(b);
+      lcdwrite(b);
     }
     else
     { lcd2.setCursor(lcdpos%40, floor(lcdpos/40)-2);
@@ -3647,9 +3770,9 @@ void loop() {
     if (kbmode==0)
     { keyon=0;
       if (opmode!=5)
-      { lcd.setCursor(0,0);
-        if (!debugging) lcd.print("DGC    Nova 1210");
-        if (!debugging) lcd.print(makespc(24));
+      { lcdsetCursor(0,0);
+        if (!debugging) lcdprint("DGC    Nova 1210");
+        if (!debugging) lcdprint(makespc(24));
       }
     }
 
@@ -3658,10 +3781,10 @@ void loop() {
     { keyon=0;
       delay(100);
       if (a0>1000) // display hint for test functions
-      { lcd.setCursor(0,0);
-        lcd.print(makespc(40));
-        lcd.setCursor(0,0);
-        lcd.print("TST DMP MT0 1 2");
+      { lcdsetCursor(0,0);
+        lcdprint(makespc(40));
+        lcdsetCursor(0,0);
+        lcdprint("TST DMP MT0 1 2");
       }  
     }
       
@@ -3677,7 +3800,7 @@ void loop() {
         if (examine(CHAROUT)>2) 
         { Serial.write(examine(CHAROUT));
           if (opmode==5) 
-            lcd.write(examine(CHAROUT));
+            lcdwrite(examine(CHAROUT));
           deposit(CHAROUT, 0);
         }
         startNova(a);
@@ -3689,7 +3812,7 @@ void loop() {
     if (func!=0 && keyon==0)
     { keyon = 1;
 
-      lcd.setCursor(0,1);
+      lcdsetCursor(0,1);
 
       writeInst(inst);	// set instruction register on Nova
       int pulselen=1;
@@ -3727,17 +3850,17 @@ void loop() {
         Serial.println(readAddr(), HEX);
 
         // update lcd for examine/deposit keys; note interaction with keypad address
-        lcd.setCursor(0,1);
-        lcd.print(makespc(40));
-        lcd.setCursor(0,1);
+        lcdsetCursor(0,1);
+        lcdprint(makespc(40));
+        lcdsetCursor(0,1);
         if      ((inst&0xe0)==0x60) 
-        { lcd.print("ac"); lcd.print((inst>>3)&3); lcd.print(":"); octaladdress = 0xfffc+((inst>>3)&3);}
+        { lcdprint("ac"); lcdprint((inst>>3)&3); lcdprint(":"); octaladdress = 0xfffc+((inst>>3)&3);}
         else if ((inst&0xe0)==0x20) 
-	      { lcd.print("ac"); lcd.print((inst>>3)&3); lcd.print("<"); octaladdress = 0xfffc+((inst>>3)&3); }
+	      { lcdprint("ac"); lcdprint((inst>>3)&3); lcdprint("<"); octaladdress = 0xfffc+((inst>>3)&3); }
         else if ((inst&0xf0)==0xf0)  
-        { lcdPrintOctal(readAddr()&0x7fff); lcd.print(":"); octaladdress = readAddr()&0x7fff; }
+        { lcdPrintOctal(readAddr()&0x7fff); lcdprint(":"); octaladdress = readAddr()&0x7fff; }
         else if ((inst&0xf0)==0xd0) 
-        { lcdPrintOctal(readAddr()&0x7fff); lcd.print("<"); octaladdress = readAddr()&0x7fff; }
+        { lcdPrintOctal(readAddr()&0x7fff); lcdprint("<"); octaladdress = readAddr()&0x7fff; }
         lcdPrintOctalAscii(readData());
         debugging=0;		// stop single step debug output
       }
@@ -3752,11 +3875,11 @@ void loop() {
         { Serial.println("interactive mode");
           SerialIO=false; opmode=0; 
         }  
-        lcd.setCursor(0,1);
-        lcd.print(makespc(40));
-        lcd.setCursor(0,1);
-        lcd.print("#");
-        lcdPrintOctal(readAddr()&0x7fff); lcd.print(":");
+        lcdsetCursor(0,1);
+        lcdprint(makespc(40));
+        lcdsetCursor(0,1);
+        lcdprint("#");
+        lcdPrintOctal(readAddr()&0x7fff); lcdprint(":");
         lcdPrintOctal(readData());      
         debugging=0;
       }
@@ -3764,11 +3887,11 @@ void loop() {
       { stopNova();
         memstepNova();
         Serial.println("memory step");
-        lcd.setCursor(0,1);
-        lcd.print(makespc(40));
-        lcd.setCursor(0,1);
-        lcd.print("$");
-        lcdPrintOctal(readAddr()&0x7fff); lcd.print(":");
+        lcdsetCursor(0,1);
+        lcdprint(makespc(40));
+        lcdsetCursor(0,1);
+        lcdprint("$");
+        lcdPrintOctal(readAddr()&0x7fff); lcdprint(":");
         lcdPrintOctal(readData());      
         debugging=0;
       }
@@ -3783,10 +3906,10 @@ void loop() {
         delay(pulselen);
         Serial.println("program load");
         WriteReg(10, 8);
-        lcd.setCursor(0,1);
-        lcd.print(makespc(40));
-        lcd.setCursor(0,1);
-        lcd.print("progload/special"); 
+        lcdsetCursor(0,1);
+        lcdprint(makespc(40));
+        lcdsetCursor(0,1);
+        lcdprint("progload/special"); 
         debugging=0;
       }
     }
