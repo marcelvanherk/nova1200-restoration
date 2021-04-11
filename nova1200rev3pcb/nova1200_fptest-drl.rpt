@@ -1,5 +1,5 @@
 Drill report for E:/software/nova1200-restoration/nova1200rev3pcb/nova1200_fptest.kicad_pcb
-Created on 5/8/2019 10:32:12 PM
+Created on 4/11/2021 7:07:02 PM
 
 Copper Layer Stackup:
     =============================================================
@@ -10,18 +10,18 @@ Copper Layer Stackup:
 Drill file 'nova1200_fptest-PTH.drl' contains
     plated through holes:
     =============================================================
-    T1  0.40mm  0.016"  (129 holes)
+    T1  0.40mm  0.016"  (137 holes)
     T2  0.50mm  0.020"  (2 holes)
-    T3  0.70mm  0.028"  (122 holes)
-    T4  0.80mm  0.031"  (392 holes)
+    T3  0.70mm  0.028"  (126 holes)
+    T4  0.80mm  0.031"  (400 holes)
     T5  0.90mm  0.035"  (94 holes)
-    T6  1.00mm  0.039"  (178 holes)
+    T6  1.00mm  0.039"  (182 holes)
     T7  1.10mm  0.043"  (54 holes)
-    T8  1.30mm  0.051"  (78 holes)
+    T8  1.40mm  0.055"  (78 holes)
     T9  2.20mm  0.087"  (2 holes)
     T10  3.20mm  0.126"  (6 holes)
 
-    Total plated holes count 1057
+    Total plated holes count 1081
 
 
 Drill file 'nova1200_fptest-NPTH.drl' contains
