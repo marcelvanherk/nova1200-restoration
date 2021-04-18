@@ -29,6 +29,8 @@
 // 20200717: Removed c_str casts, few TEENSY35 fixes, I2C delay to 1us (0us works too, but 1 more stable)
 // 20210411: Moved basic to header files, simh is  now .h file, few merged changes
 // 20210411: Some work for not SIMULATED mode; fix readData, readAddr, readLights polarity; tested on Nova OK
+// 20210414: Fix reading of carry, is on readLights not readAddr in rev3; port 6 bit 3 does not need control in rev3 pcb
+// 20210418: Added animation of color leds in testmode 7
 
 #include <U8g2lib.h>
 #include <EEPROM.h>
@@ -42,7 +44,7 @@
 U8G2_SSD1306_128X32_UNIVISION_F_SW_I2C u8g2(U8G2_R0, A9, A8); 
 U8G2LOG u8g2log;
 
-//#define SIMULATED
+#define SIMULATED
 
 int NovaPC=0;
 
@@ -479,11 +481,9 @@ unsigned int examine(int address) {
 #endif
   writeInstReg(0xf9);
   writeDataReg(address);
-  WriteReg(6, 0);  // connect data register to bus
   WriteReg(7, 4);  // pulse CONREQ
   wait();
   WriteReg(7, 0);  // revert to idle state
-  WriteReg(6, 8);
   wait();
   int v = readData(); // read lights
   writeDataReg(CurrentSwitchValue);
@@ -499,12 +499,10 @@ void depositAC(unsigned int address, unsigned int value) {
 #endif
   writeInstReg(0x23+(address<<3));
   writeDataReg(value);
-  WriteReg(6, 0);
   WriteReg(7, 4);
   wait();
   WriteReg(7, 0);
   wait();
-  WriteReg(6, 8);
   writeDataReg(CurrentSwitchValue);
 }
 
@@ -523,7 +521,6 @@ void deposit(unsigned int address, unsigned int value) {
 #endif
   writeInstReg(0xf9);
   writeDataReg(address);
-  WriteReg(6, 0);
   WriteReg(7, 4);
   wait();
   WriteReg(7, 0);
@@ -534,7 +531,6 @@ void deposit(unsigned int address, unsigned int value) {
   wait();
   WriteReg(7, 0);
   wait();
-  WriteReg(6, 8);
   writeDataReg(CurrentSwitchValue);
 }
 
@@ -657,13 +653,11 @@ void continueNovaSw(int sw)
   return;
 #endif
   writeDataReg(CurrentSwitchValue);
-  WriteReg(6, 0);
   wait();
   writeInstReg(0xfb);
   WriteReg(7, 6);
   WriteReg(7, 0);
   wait();
-  WriteReg(6, 8);
   novaRunning=true;
 }              
 
@@ -697,12 +691,12 @@ void stepNova(void)
 
   prevpc=readAddr();
   writeInstReg(0xff);
-  WriteReg(6, 9);
+  WriteReg(6, 1);
   WriteReg(7, 6);
   wait();
   Serial.println(F("instruction step"));
   WriteReg(7, 0);
-  WriteReg(6, 8);
+  WriteReg(6, 0);
 }
 
 void memstepNova(void)
@@ -720,12 +714,12 @@ void memstepNova(void)
 
 void resetNova(void)
 { stopNova();
-  WriteReg(6, 12);
+  WriteReg(6, 4);
   WriteReg(7, 6);
   delay(100);
   Serial.println("reset");
   WriteReg(7, 0);
-  WriteReg(6, 8);
+  WriteReg(6, 0);
   lcdclearline(1);
   lcdsetCursor(0,1);
   lcdprint("reset"); 
@@ -1220,7 +1214,7 @@ void lcdPrintDebug(void) {
   unsigned int in = NovaMem[NovaPC], a0, a1, a2=0, a3=0;
 #else
   unsigned int pc = readAddr()&0x7fff;
-  unsigned int carry = readAddr()&0x8000;
+  unsigned int carry = readLights()&0x20;
   unsigned int in = readData(), a0, a1, a2=0, a3=0;
 #endif
   lcdsetCursor(0,0);    // print 4 accumulators
@@ -1289,7 +1283,7 @@ void serialDebug(int mode) {
   unsigned int in = NovaMem[NovaPC], a0, a1, a2, a3;
 #else
   unsigned int pc = readAddr()&0x7fff;
-  unsigned int carry = readAddr()&0x8000;
+  unsigned int carry = readLights()&0x20;
   unsigned int in = readData(), a0, a1, a2, a3;
 #endif
   a0=examineAC(0);
@@ -1372,7 +1366,7 @@ void tests(int func)
       lcdPrintOctal(readLights());
       writeDataReg(32768>>(count&15));
       writeInstReg(1<<(count&15));
-      WriteReg(6, (count&7)); // keep connected to reg
+      WriteReg(6, count&15);
       WriteReg(7, count/16);
 
       // test that read data gives back data (only if hand enabled)
@@ -1411,6 +1405,7 @@ void tests(int func)
       deposit(ad, v);
       unsigned int c = examine(ad);
       digitalWrite(13, v!=c);
+      if (readKeys()) break;
     }
     lcdsetCursor(0,1);
     lcdprint("mt0 ready      ");
@@ -1423,6 +1418,7 @@ void tests(int func)
     lcdprint("     mt1 active");
     for(unsigned int a=0; a<65535*32; a++)
     { deposit(0, 0); // drive inhibit
+      if (readKeys()) break;
     }
     lcdsetCursor(0,1);
     lcdprint("mt1 ready      ");
@@ -1435,6 +1431,7 @@ void tests(int func)
     lcdprint("     mt2 active");
     for(unsigned int a=0; a<65535*32; a++)
     { deposit(0, 0xffff); // no inhibits driven
+      if (readKeys()) break;
     }
     lcdsetCursor(0,1);
     lcdprint("mt2 ready      ");
@@ -1450,6 +1447,7 @@ void tests(int func)
         if (v==i) s+='.'; else s+='X';
       }  
       Serial.println(s);
+      if (readKeys()) break;
     }
   }
   else if (func==6) // Continue passing virtual switches
@@ -1482,6 +1480,7 @@ void tests(int func)
       unsigned int c = examine(ad);
       digitalWrite(13, v!=c);
       deposit(ad, org);
+      if (readKeys()) break;
     }
     lcdsetCursor(0,1);
     lcdprint("mtfull ready      ");
@@ -1497,8 +1496,13 @@ void tests(int func)
       writeLights(1<<(i&7));
       writeDataReg(i<<8);
       writeInstReg(i);
+      writeColor(i%11);
       i++;
-      display(0, String(i));
+      display(i%5, String(i));
+      //display(1, String(i+123));
+      //display(2, String(i+456));
+      //display(3, String(i+789));
+      //display(4, String(1000-i));
       delay (50);
       if (readKeys()) break;
     }
@@ -1647,7 +1651,7 @@ void writeDataSim(int D) {
  
 void writeAddrSim(int A) {
 #ifdef SIMULATED
-  writeAddr(D);
+  writeAddr(A);
 #endif
 }
 
@@ -2467,7 +2471,7 @@ void processSerial(int count)
         Serial.println("carry = "+String(NovaC!=0));
 #else
         Serial.println("pc = "+toOct(readAddr()&0x7fff));
-        Serial.println("carry = "+String(readAddr()>>15));
+        Serial.println("carry = "+String(readLights()>>5));
 #endif
         nextcmd = "";
       }
