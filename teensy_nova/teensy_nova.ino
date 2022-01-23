@@ -80,6 +80,7 @@ Marcel van Herk, 4 April 2021      - Refactored configuration; added PICO mode; 
 Marcel van Herk, 5 April 2021      - Reenabled optional LEDs on pico, happen to be on same pins!
 Marcel van Herk, 6 April 2021      - Added PS2_VCC2, use Bodmer TFT initialisation, fix led 400, reduced SPI clock for reliability
 Marcel van Herk, 7 April 2021      - Added some missing EEPROM.commits, fix led command on WIFI
+Marcel van Herk, 23 January 2022   - Added support for Pico Display Pack 2.0 (define PICOD2, not PICO)
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -89,18 +90,51 @@ Marcel van Herk, 7 April 2021      - Added some missing EEPROM.commits, fix led 
 //#define FEATHERWING_TFT_TOUCH
 //#define LAZY_BREADBOARDTFT
 //#define LAZY_BREADBOARDBTN
-#define PICO
+#define PICOD2
 
 #include "SPI.h"
+#if defined(PICOD2)
+#include "Adafruit_ST7789.h"
+#define ILI9341_BLACK  ST77XX_BLACK
+#define ILI9341_RED    ST77XX_RED
+#define ILI9341_YELLOW ST77XX_YELLOW
+#define ILI9341_WHITE  ST77XX_WHITE
+#else
 #if defined(LAZY_BREADBOARDTFT) || defined(ARDUINO_LOLIN32) || defined(PICO)
 #include "Adafruit_ILI9341.h"
 #else
 #include "ILI9341_t3.h"
 #endif
+#endif
+
 #include "EEPROM.h"
 #include "PS2Keyboard.h"
 #ifdef FEATHERWING_TFT_TOUCH
 #include <Adafruit_STMPE610.h>
+#endif
+
+#ifdef PICOD2
+#  define TFT_MISO -1
+#  define TFT_SCK 18
+#  define TFT_MOSI 19
+#  define TFT_DC 16
+#  define TFT_CS 17
+#  define TFT_LED 20
+#  define A4 0
+#  define A5 0
+#  define A6 0
+#  define A7 0
+#  define BUTTON1 12
+#  define BUTTON2 2 // unused
+#  define BUTTON3 22 // unused
+#  define BUTTON4 10 // unused
+#  define BUTTON5 11 // unused
+#  define BUTTON6 13
+#  define BUTTON7 14
+#  define BUTTON8 15
+#  define LED_RED   6
+#  define LED_GREEN 7
+#  define LED_BLUE  8
 #endif
 
 #ifdef PICO
@@ -258,7 +292,9 @@ Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
 #define USEADAFRUIT
 #endif
 
-#if defined(PICO)
+#if defined(PICOD2)
+  Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, -1);
+#elif defined(PICO)
   SPIClassRP2040 spi00 = SPIClassRP2040(spi0, TFT_MOSI, TFT_CS, TFT_SCK, TFT_MISO);
   Adafruit_ILI9341 tft = Adafruit_ILI9341(&spi00, TFT_DC);
   //Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, -1, TFT_MISO); // test SW SPI
@@ -284,7 +320,7 @@ PS2Keyboard ps2kb;
 #define AR 65536
 int numButtons=8;
 
-#ifdef PICO
+#if defined(PICO) || defined(PICOD2) 
 static int keyBank=0, defaultKeyBank=0;
 int keys[] =                                                                          // no bank switching, no help
 { 25*LP+49, 25,  9*LP+10, 11*LP+12,    AR+18, 20*LP+19, 21*LP+24, 23*LP+24      // processor control (some auto repeat)
@@ -904,11 +940,13 @@ void showHelp() {
 #else
   int offs=0;
   tft.drawRect(124, 18, 57, 100, CL(32, 128, 32));
+#if !defined(PICOD2)
   tft.drawRect(124+15, 18+84, 57-30, 16, CL(32, 128, 32));
+#endif
 #endif
   tft.println("");
   tft.println("");
-#ifndef PICO
+#if !defined(PICO) && !defined(PICOD2)
   l=keyHelp(1).length();
   tft.println(makespc(16-l)+keyHelp(1)+makespc(offs)+"   o");
 #else
@@ -920,11 +958,17 @@ void showHelp() {
   l=keyHelp(0).length();
   tft.println(makespc(16-l)+keyHelp(0)+makespc(offs/2)+" o");
   tft.setTextColor(CL(192,192,64));
-#ifndef PICO
+#if !defined(PICO) && !defined(PICOD2)
   tft.println(makespc(31-offs)+"o   "+makespc(offs)+keyHelp(4));
 #endif
+
+#if defined(PICOD2)
+  tft.println(makespc(12-l)+keyHelp(5)+makespc(offs/2)+" o");
+#else
   tft.println(makespc(31-offs/2)+"  o "+makespc(offs/2)+keyHelp(5));
-#ifndef PICO
+#endif
+
+#if !defined(PICO) && !defined(PICOD2)
   l=keyHelp(3).length();
   tft.println(makespc(16-l)+keyHelp(3)+makespc(offs)+"   o");
   l=keyHelp(2).length();
@@ -939,7 +983,7 @@ void showHelp() {
   tft.println(makespc(23-(l>>1))+"FUNC "+items[keyBank]);
   tft.println("");
   tft.setTextColor(CL(192,192,64));
-#ifndef PICO
+#if !defined(PICO) && !defined(PICOD2)
   tft.print("Teensy Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
 #else
   tft.print("RPPico Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
@@ -2494,7 +2538,7 @@ void processButton(int but)
 
   // long push program load stores session modifies to eeprom
   if (but==20) { novaButton=19; storeSession(); 
-#if defined(PICO) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
                  EEPROM.commit(); 
 #endif
                }
@@ -2565,7 +2609,7 @@ void processButton(int but)
                  reset_all(0);
                  SIMINTERVAL=973; // default
                  
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) // && !defined(PICO)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2)
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
                  { analogWrite(14, 100); 
@@ -2574,6 +2618,17 @@ void processButton(int but)
                  else
                  { analogWrite(14, 200); 
                    digitalWrite(15, 1);
+                 }
+#endif
+#if false && defined(PICOD2)
+                 // flash lights when EEPROM read/write
+                 if (novaKey==2) 
+                 { analogWrite(LED_RED, 100); 
+                   digitalWrite(LED_GREEN, 0);
+                 }
+                 else
+                 { analogWrite(LED_RED, 200); 
+                   digitalWrite(LED_GREEN, 1);
                  }
 #endif
 
@@ -2602,7 +2657,7 @@ void processButton(int but)
                  { EEPROM.put(0, novaSwitches); 
                    storeSession();
                    novaSwitches=0; 
-#if defined(PICO) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
                     EEPROM.commit(); 
 #endif
                  };
@@ -2614,13 +2669,22 @@ void processButton(int but)
 
                  delay(300); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) // && !defined(PICO)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2)
                  // Dim green light when ON
                  if (novaKey==2) 
                    analogWrite(14, 3); 
                  else 
                  { analogWrite(14, 0);
                    digitalWrite(15, 0);
+                 }
+#endif
+#if false && defined(PICOD2)
+                 // Dim green light when ON
+                 if (novaKey==2) 
+                   analogWrite(LED_GREEN, 3); 
+                 else 
+                 { analogWrite(LED_GREEN, 0);
+                   digitalWrite(LED_RED, 0);
                  }
 #endif
 
@@ -3231,7 +3295,7 @@ void processSerial(int count)
       // store memory to eeprom
       else if (line.startsWith("store"))
       { storeSession();
-#if defined(PICO) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
          EEPROM.commit(); 
 #endif
       }
@@ -3280,10 +3344,17 @@ void processSerial(int count)
       { int pos1 = 4;
         unsigned short a = readOct(line, pos1);
         //gpio(a & 255);
+
+#if false && defined(PICOD2)
+        digitalWrite(LED_RED, a&1);
+        digitalWrite(LED_GREEN, (a>>1)&1);
+        digitalWrite(LED_BLUE, (a>>2)&1);
+#endif
+
 #ifdef PICO
         pinMode(25, OUTPUT);
         digitalWrite(25, (a>>8)&1);
-#else
+#elif !defined(PICOD2)
         digitalWrite(13, (a>>8)&1);
 #endif
         //digitalWrite(12, (a>>9)&1);
@@ -3519,7 +3590,7 @@ void processSerial(int count)
         EEPROM.write(58, 0);
         EEPROM.write(59, 0);
         Serial.println("Erased EEPROM session; will not load anymore");
-#if defined(PICO) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
         EEPROM.commit();
 #endif
       }
@@ -4023,7 +4094,7 @@ void processWifi(int count)
       // store memory to eeprom
       else if (line.startsWith("store")) 
       { storeSession();
-#if defined(PICO) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
         EEPROM.commit(); 
 #endif
      }
@@ -4072,10 +4143,17 @@ void processWifi(int count)
       { int pos1 = 4;
         unsigned short a = readOct(line, pos1);
         //gpio(a & 255);
+
+#if false && defined(PICOD2)
+        digitalWrite(LED_RED, a&1);
+        digitalWrite(LED_GREEN, (a>>1)&1);
+        digitalWrite(LED_BLUE, (a>>2)&1);
+#endif
+
 #ifdef PICO
         pinMode(25, OUTPUT);
         digitalWrite(25, (a>>8)&1);
-#else
+#elif !defined(PICOD2)
         digitalWrite(13, (a>>8)&1);
 #endif
         //digitalWrite(12, (a>>9)&1);
@@ -4361,6 +4439,12 @@ pinMode(TFT_RESET, OUTPUT);
 digitalWrite(TFT_RESET, HIGH);
 #endif
 
+#if false && defined(PICOD2)
+   pinMode(LED_RED, OUTPUT);
+   pinMode(LED_GREEN, OUTPUT);
+   pinMode(LED_BLUE, OUTPUT);
+#endif
+
 // on the long teensy boards, the TFT must overlap pins 33-39 (2 pin stick over), use pin 32 for LED, 36 for reset
 // all other pins are wired to the orginals, so they are set to input for safety
 
@@ -4426,7 +4510,7 @@ digitalWrite(TFT_RESET, HIGH);
   EEPROM.begin(2048); // Note: somehow initialising EEPROM 1st time takes forever; check GUI eeprom size setting
 #endif
 
-#if defined(PICO)
+#if defined(PICO) || defined(PICOD2)
   EEPROM.begin(4096);
 #endif
 
@@ -4464,6 +4548,8 @@ digitalWrite(TFT_RESET, HIGH);
 #ifdef PICO
   tft.begin(25000000);
   tft.lockTransaction(true);
+#elif defined(PICOD2)
+  tft.init(240, 320);
 #else
   tft.begin();
 #endif
@@ -4483,7 +4569,7 @@ digitalWrite(TFT_RESET, HIGH);
   
   Serial.println("Teensy Nova 1210 simulator!"); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) // && !defined(PICO)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2)
   pinMode(14, OUTPUT); // red/green led, pin controlled analog
   pinMode(15, OUTPUT); // red/green led, pin controlled digital to support TEENSY35
 #endif
