@@ -81,6 +81,11 @@ Marcel van Herk, 5 April 2021      - Reenabled optional LEDs on pico, happen to 
 Marcel van Herk, 6 April 2021      - Added PS2_VCC2, use Bodmer TFT initialisation, fix led 400, reduced SPI clock for reliability
 Marcel van Herk, 7 April 2021      - Added some missing EEPROM.commits, fix led command on WIFI
 Marcel van Herk, 23 January 2022   - Added support for Pico Display Pack 2.0 (define PICOD2, not PICO)
+Marcel van Herk, 10 Oktober 2022   - Added tape .SOS_XBASIC
+Marcel van Herk, 31 Decmber 2022   - Started PICOWS (Pico-ResTouch-LCD-2.8)
+Marcel van Herk, 16 January 2024   - PICOWS (Pico-ResTouch-LCD-2.8) starts to work; help shows speed command
+Marcel van Herk, 17 January 2024   - Use fast TFT_eSPI and make touch work for PICOWS
+Marcel van Herk, 18 January 2024   - Also use fast TFT_eSPI for PICOD2
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -94,11 +99,57 @@ Marcel van Herk, 23 January 2022   - Added support for Pico Display Pack 2.0 (de
 
 #include "SPI.h"
 #if defined(PICOD2)
-#include "Adafruit_ST7789.h"
-#define ILI9341_BLACK  ST77XX_BLACK
-#define ILI9341_RED    ST77XX_RED
-#define ILI9341_YELLOW ST77XX_YELLOW
-#define ILI9341_WHITE  ST77XX_WHITE
+
+// put this in: C:\Users\marcel\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
+/*
+#define ST7789_DRIVER
+#define TFT_WIDTH  240
+#define TFT_HEIGHT 320
+#define TFT_MOSI  19
+#define TFT_SCLK  18
+#define TFT_CS    17
+#define TFT_DC    16
+#define TFT_RGB_ORDER TFT_BGR
+#define RP2040_PIO_SPI
+*/
+
+#include "TFT_eSPI.h"
+
+#define ILI9341_BLACK  TFT_BLACK
+#define ILI9341_RED    TFT_RED
+#define ILI9341_YELLOW TFT_YELLOW
+#define ILI9341_WHITE  TFT_WHITE
+
+//#include "Adafruit_ST7789.h"
+//#define ILI9341_BLACK  ST77XX_BLACK
+//#define ILI9341_RED    ST77XX_RED
+//#define ILI9341_YELLOW ST77XX_YELLOW
+//#define ILI9341_WHITE  ST77XX_WHITE
+
+#elif defined(PICOWS)
+// put this in: C:\Users\marcel\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
+/*
+#define ST7789_DRIVER
+#define TFT_WIDTH  240
+#define TFT_HEIGHT 320
+#define TFT_MISO  12
+#define TFT_MOSI  11
+#define TFT_SCLK  10
+#define TFT_CS    9
+#define TFT_DC    8
+#define TFT_RST   15
+#define TFT_RGB_ORDER TFT_BGR
+//#define RP2040_PIO_SPI 
+#define TOUCH_CS  16
+#define TFT_SPI_PORT 1
+*/
+
+#include "TFT_eSPI.h"
+
+#define ILI9341_BLACK  TFT_BLACK
+#define ILI9341_RED    TFT_RED
+#define ILI9341_YELLOW TFT_YELLOW
+#define ILI9341_WHITE  TFT_WHITE
 #else
 #if defined(LAZY_BREADBOARDTFT) || defined(ARDUINO_LOLIN32) || defined(PICO)
 #include "Adafruit_ILI9341.h"
@@ -114,12 +165,14 @@ Marcel van Herk, 23 January 2022   - Added support for Pico Display Pack 2.0 (de
 #endif
 
 #ifdef PICOD2
+// unused for TFT_eSPI
 #  define TFT_MISO -1
 #  define TFT_SCK 18
 #  define TFT_MOSI 19
 #  define TFT_DC 16
 #  define TFT_CS 17
 #  define TFT_LED 20
+#  define TFT_RESET -1
 #  define A4 0
 #  define A5 0
 #  define A6 0
@@ -135,6 +188,29 @@ Marcel van Herk, 23 January 2022   - Added support for Pico Display Pack 2.0 (de
 #  define LED_RED   6
 #  define LED_GREEN 7
 #  define LED_BLUE  8
+#endif
+
+#ifdef PICOWS
+#  define TFT_MISO 12
+#  define TFT_SCK 10
+#  define TFT_MOSI 11
+#  define TFT_DC 8
+#  define TFT_CS 9
+#  define TFT_LED 13
+#  define TFT_RESET 15
+#  define A4 0
+#  define A5 0
+#  define A6 0
+#  define A7 0
+#  define BUTTON1 2
+#  define BUTTON2 2 // unused
+#  define BUTTON3 2 // unused
+#  define BUTTON4 2 // unused
+#  define BUTTON5 2 // unused
+#  define BUTTON6 2
+#  define BUTTON7 2
+#  define BUTTON8 2
+#  define TOUCH_CS 16
 #endif
 
 #ifdef PICO
@@ -283,17 +359,29 @@ Marcel van Herk, 23 January 2022   - Added support for Pico Display Pack 2.0 (de
 #endif
 
 #ifdef TOUCH_CS
-Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
+#ifdef PICOWS
+  #define touch tft
+#else
+  Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
+#endif
 #endif
 
 #ifndef CL // depends on inclusion of ILI9341_t3.h
 #define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
+#if defined(PICOWS) || defined(PICOD2)
+#define writeRect(a, b, c, d, e) pushImage(a, b, c, d, e) 
+#else
 #define writeRect(a, b, c, d, e) drawRGBBitmap(a, b, e, c, d) 
+#endif
 #define USEADAFRUIT
 #endif
 
 #if defined(PICOD2)
-  Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, -1);
+   TFT_eSPI tft = TFT_eSPI();
+  //Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RESET);
+#elif defined(PICOWS)
+   TFT_eSPI tft = TFT_eSPI();
+  //Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET);
 #elif defined(PICO)
   SPIClassRP2040 spi00 = SPIClassRP2040(spi0, TFT_MOSI, TFT_CS, TFT_SCK, TFT_MISO);
   Adafruit_ILI9341 tft = Adafruit_ILI9341(&spi00, TFT_DC);
@@ -443,7 +531,7 @@ int getButtonPress(bool raw)
   static unsigned int lastChange=0;
   static unsigned int autoRepeat=0;
   
-#ifdef FEATHERWING_TFT_TOUCH
+#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS)
   return getTouchPress(raw);
 #endif
 
@@ -594,7 +682,7 @@ int getButtonPress(bool raw)
 
 int novaKey = 1;
 
-#ifdef FEATHERWING_TFT_TOUCH
+#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS)
 // get touch with debounce, autorepeat and long press as configured in key array
 // raw touch used for menu only
 int getTouchPress(bool raw)
@@ -623,7 +711,11 @@ int getTouchPress(bool raw)
   static int currentButtons = 0;
   if (millis()-lastTouch>200 || novaKey==2)
   { lastTouch=millis();
+#ifdef PICOWS
+    if (touch.getTouch(&x, &y))
+#else  
     if (touch.touched())
+#endif
     { unsigned short *data1 = (unsigned short *)malloc(320*2);
       unsigned short *data2 = (unsigned short *)malloc(320*2);
       unsigned short *data3 = (unsigned short *)malloc(320*2);
@@ -639,11 +731,25 @@ int getTouchPress(bool raw)
       tft.drawLine(160, 0, 160, 239, CL(255,255,255));
       tft.drawLine(240, 0, 240, 239, CL(255,255,255));
   
+#ifdef PICOWS
+      z=0;
+      if (touch.getTouch(&x,&y)) z=40;
+#else
       while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
+#endif
       if (x && y && z>20) 
       { 
+#ifdef PICOWS
+        z = (200-y)/100; if (z>1) z=1; if (z<0) z=0;
+        y = (300-x)/75; if (y>3) y=3; if (y<0) y=0;
+        x=z;
+#else
         x = (x-200)/1800; if (x>1) x=1; if (x<0) x=0;
         y = (y-200)/900; if (y>3) y=3; if (y<0) y=0;
+#endif
+      Serial.println(x);
+      Serial.println(y);
+
         x=(y+x*4);
         switch(x)
         { case 0: currentButtons=1; break;
@@ -668,7 +774,12 @@ int getTouchPress(bool raw)
       free(data4);
     }
     else
-    { while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
+    { 
+#ifdef PICOWS
+      //while (touch.getTouch(&x,&y))
+#else
+      while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
+#endif
       currentButtons=0;
     }
   }
@@ -737,7 +848,7 @@ int getTouchPress(bool raw)
   }
 
   // waiting for long press
-  if (stat==1 && millis()-lastChange>500 && millis()-autoRepeat>repeatTime && (autorep||longpress)) 
+  if (stat==1 && millis()-lastChange>1000 && millis()-autoRepeat>repeatTime && (autorep||longpress)) 
   { genKey=true;
     lastKey=0;
     autoRepeat=millis();
@@ -775,6 +886,17 @@ int novaData = 0;
 int novaLights = 0;
 
 #include "nova.image.h"
+
+void drawCircle(unsigned short *data, int x, int y, int r, unsigned short c)
+{
+  data[x+y*gimp_image.width]=c;
+  data[x+1+y*gimp_image.width]=c;
+  data[x-1+y*gimp_image.width]=c;
+  data[x+(y+1)*gimp_image.width]=c;
+  data[x+(y-1)*gimp_image.width]=c;
+  data[x-1+(y+1)*gimp_image.width]=c;
+  data[x+1+(y-1)*gimp_image.width]=c;
+}
 
 void updateImage()
 { int lampoff=CL(32, 16, 0);
@@ -854,6 +976,17 @@ void updateImage()
   }
 
   // draw address lights
+  //unsigned short *data = (unsigned short *)malloc(gimp_image.width*6*2);
+  //memcpy(data, (uint16_t*)(gimp_image.pixel_data)+8*gimp_image.width, gimp_image.width*6*2);
+  //for (int i=0; i<15; i++) 
+  //{ if (((novaAddress<<i)&0x4000)==0 || pwroff)
+  //    drawCircle(data, 97+i*11.8, 3, 2, lampoff);
+  //  else
+  //    drawCircle(data, 97+i*11.8, 3, 2, lampon);
+  // 
+  //}
+  //tft.writeRect(0, vshift+8, gimp_image.width, 6, (uint16_t*)data);
+  //free(data);
   for (int i=0; i<15; i++) 
   { if (((novaAddress<<i)&0x4000) != (((oldaddress<<i)&0x4000)))
     { if (((novaAddress<<i)&0x4000)==0 || pwroff)
@@ -867,6 +1000,16 @@ void updateImage()
   // draw carry and data lights
   int dc = novaData;
   if (novaCarry) dc += 0x10000;
+  //unsigned short *data2 = (unsigned short *)malloc(gimp_image.width*6*2);
+  //for (int i=0; i<17; i++) 
+  //{ if (((dc<<i)&0x10000)==0  || pwroff)
+  //    drawCircle(data2, 74+i*11.8, 3, 2, lampoff);
+  //  else
+  //    drawCircle(data2, 74+i*11.8, 3, 2, lampon);
+  // 
+  //}
+  //tft.writeRect(0, vshift+21, gimp_image.width, 6, (uint16_t*)data2);
+  //free(data2);
   for (int i=0; i<17; i++)
   { if (((dc<<i)&0x10000) != (((olddata<<i)&0x10000)))
     { if (((dc<<i)&0x10000)==0 || pwroff)
@@ -923,14 +1066,14 @@ void showHelp() {
   tft.setTextSize(1);
   tft.setCursor(0,0);
   tft.println("");
-#ifdef FEATHERWING_TFT_TOUCH
+#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS)
   tft.println("                    Touch help");
 #else
   tft.println("                    Button help");
 #endif
   tft.setTextColor(CL(255,64,0));
   tft.println("FUNC: key functions             Press short / long");
-#ifdef FEATHERWING_TFT_TOUCH
+#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS)
   int offs=3;
   tft.drawRect(97, 35, 109, 74, CL(32, 128, 32));
   tft.drawLine(97, 35+37, 97+108, 35+37, CL(32, 128, 32));
@@ -983,7 +1126,7 @@ void showHelp() {
   tft.println(makespc(23-(l>>1))+"FUNC "+items[keyBank]);
   tft.println("");
   tft.setTextColor(CL(192,192,64));
-#if !defined(PICO) && !defined(PICOD2)
+#if !defined(PICO) && !defined(PICOD2) && !defined(PICOWS)
   tft.print("Teensy Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
 #else
   tft.print("RPPico Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
@@ -1806,6 +1949,7 @@ void WIFIDebug(int mode) {
 
 // Array with contents of punched tape; there is space for several tapes
 #include "novabasic1.tape.h"
+#include "sos_xbasic.tape.h"
 
 String tapeloader(const unsigned char*p, int len, String name)
 {  Serial.println("Loading 'tape' from code memory: "+name);
@@ -2538,7 +2682,7 @@ void processButton(int but)
 
   // long push program load stores session modifies to eeprom
   if (but==20) { novaButton=19; storeSession(); 
-#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
                  EEPROM.commit(); 
 #endif
                }
@@ -2609,7 +2753,7 @@ void processButton(int but)
                  reset_all(0);
                  SIMINTERVAL=973; // default
                  
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS)
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
                  { analogWrite(14, 100); 
@@ -2620,15 +2764,15 @@ void processButton(int but)
                    digitalWrite(15, 1);
                  }
 #endif
-#if false && defined(PICOD2)
+#if defined(PICOD2)
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
-                 { analogWrite(LED_RED, 100); 
-                   digitalWrite(LED_GREEN, 0);
+                 { analogWrite(LED_RED, 255-100); 
+                   digitalWrite(LED_GREEN, HIGH);
                  }
-                 else
-                 { analogWrite(LED_RED, 200); 
-                   digitalWrite(LED_GREEN, 1);
+                 else 
+                 { analogWrite(LED_RED, 255-200); 
+                   digitalWrite(LED_GREEN, LOW);
                  }
 #endif
 
@@ -2657,7 +2801,7 @@ void processButton(int but)
                  { EEPROM.put(0, novaSwitches); 
                    storeSession();
                    novaSwitches=0; 
-#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
                     EEPROM.commit(); 
 #endif
                  };
@@ -2669,7 +2813,7 @@ void processButton(int but)
 
                  delay(300); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS)
                  // Dim green light when ON
                  if (novaKey==2) 
                    analogWrite(14, 3); 
@@ -2678,13 +2822,17 @@ void processButton(int but)
                    digitalWrite(15, 0);
                  }
 #endif
-#if false && defined(PICOD2)
+#if defined(PICOD2)
                  // Dim green light when ON
                  if (novaKey==2) 
-                   analogWrite(LED_GREEN, 3); 
+                 { analogWrite(LED_GREEN, 255-3); 
+                   analogWrite(LED_RED, 255-3); 
+                   digitalWrite(LED_BLUE, HIGH); 
+                 }
                  else 
-                 { analogWrite(LED_GREEN, 0);
-                   digitalWrite(LED_RED, 0);
+                 { analogWrite(LED_GREEN, 255-0);
+                   digitalWrite(LED_RED, HIGH);
+                   digitalWrite(LED_BLUE, HIGH); 
                  }
 #endif
 
@@ -2723,6 +2871,7 @@ String("step [ count]         debug step count instructions\r\n")+
 String("reset                 reset nova\r\n")+
 String("stop                  stop nova\r\n")+
 String("continue              continue nova\r\n")+
+String("speed factor          instructions per screen update\r\n")+
 String("clear addr cnt [ val] clear block of memory with value\r\n")+
 //String("load addr block cnt   load RAM from eeprom blocks\r\n")+
 //String("save addr block cnt   save RAM to eeprom blocks\r\n")+
@@ -3295,7 +3444,7 @@ void processSerial(int count)
       // store memory to eeprom
       else if (line.startsWith("store"))
       { storeSession();
-#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
          EEPROM.commit(); 
 #endif
       }
@@ -3345,13 +3494,13 @@ void processSerial(int count)
         unsigned short a = readOct(line, pos1);
         //gpio(a & 255);
 
-#if false && defined(PICOD2)
-        digitalWrite(LED_RED, a&1);
-        digitalWrite(LED_GREEN, (a>>1)&1);
-        digitalWrite(LED_BLUE, (a>>2)&1);
+#if defined(PICOD2)
+        digitalWrite(LED_RED, !(a&1));
+        digitalWrite(LED_GREEN, !((a>>1)&1));
+        digitalWrite(LED_BLUE, !((a>>2)&1));
 #endif
 
-#ifdef PICO
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS)
         pinMode(25, OUTPUT);
         digitalWrite(25, (a>>8)&1);
 #elif !defined(PICOD2)
@@ -3564,6 +3713,12 @@ void processSerial(int count)
           line = "";
           return;
         }
+        if (filename==".SOS_XBASIC")
+        { nextcmd=tapeloader(sos_xbasictape, sizeof(sos_xbasictape), ".sos_xbasic");
+          Serial.print(">");
+          line = "";
+          return;
+        }
         if (filename=="LIST")
         { Serial.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
         }
@@ -3590,7 +3745,7 @@ void processSerial(int count)
         EEPROM.write(58, 0);
         EEPROM.write(59, 0);
         Serial.println("Erased EEPROM session; will not load anymore");
-#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
         EEPROM.commit();
 #endif
       }
@@ -4094,7 +4249,7 @@ void processWifi(int count)
       // store memory to eeprom
       else if (line.startsWith("store")) 
       { storeSession();
-#if defined(PICO) || defined(PICOD2) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
         EEPROM.commit(); 
 #endif
      }
@@ -4144,13 +4299,13 @@ void processWifi(int count)
         unsigned short a = readOct(line, pos1);
         //gpio(a & 255);
 
-#if false && defined(PICOD2)
-        digitalWrite(LED_RED, a&1);
-        digitalWrite(LED_GREEN, (a>>1)&1);
-        digitalWrite(LED_BLUE, (a>>2)&1);
+#if defined(PICOD2)
+        digitalWrite(LED_RED, !(a&1));
+        digitalWrite(LED_GREEN, !((a>>1)&1));
+        digitalWrite(LED_BLUE, !((a>>2)&1));
 #endif
 
-#ifdef PICO
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) 
         pinMode(25, OUTPUT);
         digitalWrite(25, (a>>8)&1);
 #elif !defined(PICOD2)
@@ -4363,6 +4518,12 @@ void processWifi(int count)
           line = "";
           return;
         }
+        if (filename==".SOS_XBASIC")
+        { nextcmd=tapeloader(sos_xbasictape, sizeof(sos_xbasictape), ".sos_xbasic");
+          WIFI.print(">");
+          line = "";
+          return;
+        }
         if (filename=="LIST")
         { WIFI.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
         }
@@ -4437,12 +4598,25 @@ void setup() {
 #ifdef TFT_RESET
 pinMode(TFT_RESET, OUTPUT);
 digitalWrite(TFT_RESET, HIGH);
+
+#ifdef PICOWS
+digitalWrite(TFT_RESET, HIGH);
+delay(500);
+digitalWrite(TFT_RESET, LOW);
+delay(500);
+digitalWrite(TFT_RESET, HIGH);
+delay(500);
 #endif
 
-#if false && defined(PICOD2)
+#endif
+
+#if defined(PICOD2)
    pinMode(LED_RED, OUTPUT);
    pinMode(LED_GREEN, OUTPUT);
    pinMode(LED_BLUE, OUTPUT);
+   analogWrite(LED_GREEN, HIGH);
+   digitalWrite(LED_RED, HIGH);
+   digitalWrite(LED_BLUE, HIGH); 
 #endif
 
 // on the long teensy boards, the TFT must overlap pins 33-39 (2 pin stick over), use pin 32 for LED, 36 for reset
@@ -4510,15 +4684,16 @@ digitalWrite(TFT_RESET, HIGH);
   EEPROM.begin(2048); // Note: somehow initialising EEPROM 1st time takes forever; check GUI eeprom size setting
 #endif
 
-#if defined(PICO) || defined(PICOD2)
+#if defined(PICO) || defined(PICOD2)|| defined(PICOWS)
   EEPROM.begin(4096);
 #endif
 
-#ifdef FEATHERWING_TFT_TOUCH
+#if defined(FEATHERWING_TFT_TOUCH)
   if (!touch.begin())
     Serial.println("No touch screen found");
+#endif
 
-  // power button ps2 keyboard interface board
+#if defined(FEATHERWING_TFT_TOUCH)
   pinMode(PWRBUTTON, INPUT_PULLUP); // switch
 #endif
 
@@ -4545,12 +4720,14 @@ digitalWrite(TFT_RESET, HIGH);
 #endif
 
   delay(100);
-#ifdef PICO
+#if defined(PICO)
   tft.begin(25000000);
   tft.lockTransaction(true);
-#elif defined(PICOD2)
-  tft.init(240, 320);
-#else
+//#elif defined(PICOD2)
+//  tft.init(240, 320);
+#elif defined(PICOWS) || defined(PICOD2)
+  tft.init();
+  tft.setSwapBytes(true); // needed for pushImage() of TFT_eSPI
   tft.begin();
 #endif
 
@@ -4558,7 +4735,11 @@ digitalWrite(TFT_RESET, HIGH);
   tft.setClock(75000000);
   tft.setRotation(1);
 #else
+#ifdef PICOD2
+  tft.setRotation(1);
+#else
   tft.setRotation(3);
+#endif
 #endif
   tft.fillScreen(ILI9341_BLACK);
 
@@ -4569,7 +4750,7 @@ digitalWrite(TFT_RESET, HIGH);
   
   Serial.println("Teensy Nova 1210 simulator!"); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS)
   pinMode(14, OUTPUT); // red/green led, pin controlled analog
   pinMode(15, OUTPUT); // red/green led, pin controlled digital to support TEENSY35
 #endif
