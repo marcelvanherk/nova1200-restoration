@@ -86,6 +86,10 @@ Marcel van Herk, 31 Decmber 2022   - Started PICOWS (Pico-ResTouch-LCD-2.8)
 Marcel van Herk, 16 January 2024   - PICOWS (Pico-ResTouch-LCD-2.8) starts to work; help shows speed command
 Marcel van Herk, 17 January 2024   - Use fast TFT_eSPI and make touch work for PICOWS
 Marcel van Herk, 18 January 2024   - Also use fast TFT_eSPI for PICOD2
+Marcel van Herk, 21 January 2024   - Added wifi commands, PICOW define, rudimentary server
+Marcel van Herk, 23 January 2024   - Also PICO uses fast TFT_eSPI for ILI9341; detect out of memory
+                                   - on PICOW MEMSIZE 32768 does not work - cannot store sessions
+                                   - session auto|manual command; Note: coded sessions assume 32768 memory size
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -94,12 +98,24 @@ Marcel van Herk, 18 January 2024   - Also use fast TFT_eSPI for PICOD2
 // select breadboard type or Featherwing TFT board (define none or one)
 //#define FEATHERWING_TFT_TOUCH
 //#define LAZY_BREADBOARDTFT
-//#define LAZY_BREADBOARDBTN
-#define PICOD2
+#define LAZY_BREADBOARDBTN
+#define PICO
+//#define PICOWS
+//#define PICOD2
+
+#define PICOW  // has built-in wifi; but uses more memory even if wifi not used - need to reduce MEMSIZE to 16384
+#ifdef PICOW
+#include <WiFi.h>
+char ssid[18];
+char password[18];
+int port = 4242;
+WiFiServer server(port);
+WiFiClient client;
+#define WIFI client
+#endif
 
 #include "SPI.h"
 #if defined(PICOD2)
-
 // put this in: C:\Users\marcel\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
 /*
 #define ST7789_DRIVER
@@ -150,6 +166,27 @@ Marcel van Herk, 18 January 2024   - Also use fast TFT_eSPI for PICOD2
 #define ILI9341_RED    TFT_RED
 #define ILI9341_YELLOW TFT_YELLOW
 #define ILI9341_WHITE  TFT_WHITE
+
+#elif defined(PICO)
+// put this in: C:\Users\marcel\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
+/*
+#define ILI9341_DRIVER
+#define TFT_WIDTH  240
+#define TFT_HEIGHT 320
+#define TFT_MISO  16
+#define TFT_MOSI  19
+#define TFT_SCLK  18
+#define TFT_CS    17
+#define TFT_DC    20
+//#define TFT_RST   15
+#define TFT_RGB_ORDER TFT_BGR
+//#define RP2040_PIO_SPI 
+#define TOUCH_CS  16
+#define TFT_SPI_PORT 1
+*/
+
+#include "TFT_eSPI.h"
+
 #else
 #if defined(LAZY_BREADBOARDTFT) || defined(ARDUINO_LOLIN32) || defined(PICO)
 #include "Adafruit_ILI9341.h"
@@ -158,8 +195,6 @@ Marcel van Herk, 18 January 2024   - Also use fast TFT_eSPI for PICOD2
 #endif
 #endif
 
-#include "EEPROM.h"
-#include "PS2Keyboard.h"
 #ifdef FEATHERWING_TFT_TOUCH
 #include <Adafruit_STMPE610.h>
 #endif
@@ -349,6 +384,18 @@ Marcel van Herk, 18 January 2024   - Also use fast TFT_eSPI for PICOD2
 #  define BUTTON8 0
 #endif
 
+#include "EEPROM.h"
+/* layout:
+ * 0-1   state of NOVA switches
+ * 2-17  SSID of wifi if used
+ * 18-37 password of wifi if used
+ * 38-39 length of eeprom session 
+ * 40    auto (0), manual (1) eeprom save
+ * 56-   id and data of eeprom session
+*/
+
+#include "PS2Keyboard.h"
+
 // set up variables using the SD utility library functions:
 #ifdef SD_CS
 # include <SD.h>
@@ -368,7 +415,7 @@ Marcel van Herk, 18 January 2024   - Also use fast TFT_eSPI for PICOD2
 
 #ifndef CL // depends on inclusion of ILI9341_t3.h
 #define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
-#if defined(PICOWS) || defined(PICOD2)
+#if defined(PICOWS) || defined(PICOD2) || defined(PICO)
 #define writeRect(a, b, c, d, e) pushImage(a, b, c, d, e) 
 #else
 #define writeRect(a, b, c, d, e) drawRGBBitmap(a, b, e, c, d) 
@@ -383,9 +430,10 @@ Marcel van Herk, 18 January 2024   - Also use fast TFT_eSPI for PICOD2
    TFT_eSPI tft = TFT_eSPI();
   //Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET);
 #elif defined(PICO)
-  SPIClassRP2040 spi00 = SPIClassRP2040(spi0, TFT_MOSI, TFT_CS, TFT_SCK, TFT_MISO);
-  Adafruit_ILI9341 tft = Adafruit_ILI9341(&spi00, TFT_DC);
-  //Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, -1, TFT_MISO); // test SW SPI
+   TFT_eSPI tft = TFT_eSPI();
+  //SPIClassRP2040 spi00 = SPIClassRP2040(spi0, TFT_MOSI, TFT_CS, TFT_SCK, TFT_MISO);
+  //Adafruit_ILI9341 tft = Adafruit_ILI9341(&spi00, TFT_DC);
+  ////Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, -1, TFT_MISO); // test SW SPI
 #elif defined(USEADAFRUIT)
   Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO);
   //Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC); //, TFT_MOSI, TFT_SCK, TFT_RESET, TFT_MISO); // HW SPI, requires extra wires
@@ -2392,10 +2440,16 @@ void unloadDiffToEEPROM()
 { if (sessionID==0) 
   { tft.setCursor(0,0);
     tft.println("** no session loaded **");
-        delay(5000);
+    delay(5000);
     return;
   }
   unsigned short *q=(unsigned short *)malloc(MEMSIZE*2);
+  if (q==NULL)
+  { tft.setCursor(0,0);
+    tft.println("** out of memory **");
+    delay(5000);
+    return;
+  }
   memcpy(q, NovaMem, MEMSIZE*2);
   int id=restoreSession(String(sessionID));
   unload(q, micros() & 0xffff, id); // stores memory-session to eeprom if fits
@@ -2773,6 +2827,8 @@ void processButton(int but)
                  else 
                  { analogWrite(LED_RED, 255-200); 
                    digitalWrite(LED_GREEN, LOW);
+                   delay(100);
+                   digitalWrite(LED_GREEN, HIGH);
                  }
 #endif
 
@@ -2799,7 +2855,7 @@ void processButton(int but)
                  };
                  if (novaKey==1) 
                  { EEPROM.put(0, novaSwitches); 
-                   storeSession();
+                   if (EEPROM.read(40)==0) storeSession();
                    novaSwitches=0; 
 #if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
                     EEPROM.commit(); 
@@ -2879,6 +2935,7 @@ String("tape filename         Load tape data from code memory\r\n")+
 String("tape list             List all tapes in eeprom and code memory\r\n")+
 String("session filename      load session from code memory \r\n")+
 String("session list          List all sessions from code memory\r\n")+
+String("session auto|manual   Enable(default)/disable autostore session\r\n")+
 String("store                 store session difference to eeprom\r\n")+
 String("restore               restore session and difference from eeprom\r\n")+
 String("unload                print session as numbers to be embedded in code\r\n")+
@@ -2899,6 +2956,9 @@ String("writel N              write lights (without NOVA)\r\n")+
 String("memory address        hex dump memory block to output\r\n")+
 String("plot address range    plot 80 values (+/- range)\r\n")+
 String("vis address count     visualize memory as gray scale, default 1600 chars\r\n")+
+#ifdef PICOW
+String("wifi SSID|password|forget set WIFI identification or forget it\r\n")+
+#endif
 String("init                  init Arduino supervisor\r\n")+
 String(":nnaaaa[hhhh]         Deposit nn memory locations (a and h hex)\r\n")+
 //String(";naaaa[hh*16]         Write line n in eeprom block (a and h hex)\r\n")+
@@ -2916,7 +2976,7 @@ int nhist=0;
 bool kmode=false;
 int kaddress=0;
 
-// support to inect 'serial' data from code or buttons
+// support to inject 'serial' data from code or buttons
 String injectSerialText="";
 int injectSerialDelay=0;
 
@@ -2925,9 +2985,38 @@ byte Serialread()
     return Serial.read();
   
 #ifdef WIFI
-  if (WIFI.available())
+  if (WIFI && WIFI.available())
   { hasWIFI = true;
-    return WIFI.read();
+    byte b = WIFI.read();
+//Serial.print('#');
+//Serial.println(b);
+//delay(50);
+
+    if (b==255)
+    { while(!WIFI.available());
+      int c=WIFI.read();
+      while(!WIFI.available());
+      int v=WIFI.read();
+
+      if (c==253) c=252;
+      else if (c==251) c=254;
+
+      WIFI.write(255);
+      WIFI.write(c);
+      WIFI.write(v);
+//Serial.println(c);
+//Serial.println(v);
+      while(!WIFI.available());
+      b = WIFI.read();
+//Serial.println(v);
+      return b;
+    }
+    else if (b==13)
+    { while(!WIFI.available());
+      WIFI.read();
+    }
+    else
+      return b;
   }
 #endif
   
@@ -3704,7 +3793,7 @@ void processSerial(int count)
       else if (line.startsWith("tape "))
       { int pos1 = 5;
         String filename = line.substring(pos1, 99);
-	filename.toUpperCase(); // +"@";
+	      filename.toUpperCase(); // +"@";
 
         // absolute tape loader using program data
         if (filename==".BASIC")
@@ -3721,6 +3810,7 @@ void processSerial(int count)
         }
         if (filename=="LIST")
         { Serial.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
+          Serial.println(".SOS_XBASIC in code memory; length "+toOct(sizeof(basictape)));
         }
         else if(filename!="LIST")
           Serial.println("Tape "+filename+" not found");
@@ -3740,6 +3830,7 @@ void processSerial(int count)
       else if (line.startsWith("cleareepromsession")) // undocumented
       { EEPROM.write(38, 0);
         EEPROM.write(39, 0);
+        EEPROM.write(40, 0);
         EEPROM.write(56, 0);
         EEPROM.write(57, 0);
         EEPROM.write(58, 0);
@@ -3753,9 +3844,21 @@ void processSerial(int count)
       else if (line.startsWith("session "))
       { int pos1 = 8;
         String filename = line.substring(pos1, 99);
-	filename.toUpperCase();
+       	filename.toUpperCase();
                 
-        if (filename=="LIST")
+        if (filename=="AUTO")
+        { EEPROM.write(40, 0);
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
+          EEPROM.commit();
+#endif
+        }
+        else if (filename=="MANUAL")
+        { EEPROM.write(40, 1);
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
+          EEPROM.commit();
+#endif
+        }
+        else if (filename=="LIST")
         { for (int i=1; i<100; i++)
           { String name=getSessionName(-i);
             int len= getSessionLength(getSessionID(name));
@@ -3780,6 +3883,48 @@ void processSerial(int count)
         nextcmd="";
       }       
 
+#ifdef PICOW      
+      else if (line.startsWith("wifi SSID "))
+      { int pos1 = 10;
+        String name = line.substring(pos1, 99);
+        if (name.length()>16)
+        { Serial.println("wifi name is too long - truncated to 16 characters");
+          name = name.substring(0, 16);
+        }
+        for (int i=0; i<16; i++)
+          EEPROM.write(2+i, 0);
+        for (int i=0; i<name.length(); i++)
+          EEPROM.write(2+i, name.charAt(i));
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
+        EEPROM.commit();
+#endif
+      }
+
+      else if (line.startsWith("wifi password "))
+      { int pos1 = 14;
+        String name = line.substring(pos1, 99);
+        if (name.length()>16)
+        { Serial.println("wifi password is too long - truncated to 16 characters");
+          name = name.substring(0, 16);
+        }
+        for (int i=0; i<16; i++)
+          EEPROM.write(18+i, 0);
+        for (int i=0; i<name.length(); i++)
+          EEPROM.write(18+i, name.charAt(i));
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
+        EEPROM.commit();
+#endif
+      }
+
+      else if (line.startsWith("wifi forget"))
+      { for (int i=0; i<32; i++)
+          EEPROM.write(2+i, 0);
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
+        EEPROM.commit();
+#endif
+      }
+#endif
+
       else if (line.length()>0)
         Serial.println("Unknown or mistyped command ignored");
 
@@ -3797,6 +3942,34 @@ void processWifi(int count)
   char m[50];
   int pc;
   int a;
+
+//Serial.print('#');
+//Serial.println(b);
+//delay(50);
+
+  if (b==255)
+  { while(!WIFI.available());
+    int c=WIFI.read();
+    while(!WIFI.available());
+    int v=WIFI.read();
+
+    if (c==253) c=252;
+    else if (c==251) c=254;
+
+    WIFI.write(255);
+    WIFI.write(c);
+    WIFI.write(v);
+//Serial.println(c);
+//Serial.println(v);
+
+    while(!WIFI.available());
+    b = WIFI.read();
+//Serial.println(b);
+  }
+  else if (b==13)
+  { while(!WIFI.available());
+    WIFI.read();
+  }
 
   // power ON if not
   if (novaKey==1)
@@ -4526,6 +4699,7 @@ void processWifi(int count)
         }
         if (filename=="LIST")
         { WIFI.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
+          WIFI.println(".SOS_XBASIC in code memory; length "+toOct(sizeof(sos_xbasictape)));
         }
         else if(filename!="LIST")
           WIFI.println("Tape "+filename+" not found");
@@ -4546,6 +4720,7 @@ void processWifi(int count)
       else if (line.startsWith("cleareepromsession")) // undocumented
       { EEPROM.write(38, 0);
         EEPROM.write(39, 0);
+        EEPROM.write(40, 0);
         EEPROM.write(56, 0);
         EEPROM.write(57, 0);
         EEPROM.write(58, 0);
@@ -4601,11 +4776,11 @@ digitalWrite(TFT_RESET, HIGH);
 
 #ifdef PICOWS
 digitalWrite(TFT_RESET, HIGH);
-delay(500);
+delay(100);
 digitalWrite(TFT_RESET, LOW);
-delay(500);
+delay(100);
 digitalWrite(TFT_RESET, HIGH);
-delay(500);
+delay(100);
 #endif
 
 #endif
@@ -4614,7 +4789,7 @@ delay(500);
    pinMode(LED_RED, OUTPUT);
    pinMode(LED_GREEN, OUTPUT);
    pinMode(LED_BLUE, OUTPUT);
-   analogWrite(LED_GREEN, HIGH);
+   digitalWrite(LED_GREEN, HIGH);
    digitalWrite(LED_RED, HIGH);
    digitalWrite(LED_BLUE, HIGH); 
 #endif
@@ -4720,19 +4895,20 @@ delay(500);
 #endif
 
   delay(100);
-#if defined(PICO)
-  tft.begin(25000000);
-  tft.lockTransaction(true);
+//#if defined(PICO)
+//  tft.begin(25000000);
+//  tft.lockTransaction(true);
 //#elif defined(PICOD2)
 //  tft.init(240, 320);
-#elif defined(PICOWS) || defined(PICOD2)
+//#elif 
+#if defined(PICOWS) || defined(PICOD2) || defined(PICO)
   tft.init();
   tft.setSwapBytes(true); // needed for pushImage() of TFT_eSPI
   tft.begin();
 #endif
 
 #ifndef USEADAFRUIT
-  tft.setClock(75000000);
+  //???? tft.setClock(75000000);
   tft.setRotation(1);
 #else
 #ifdef PICOD2
@@ -4744,7 +4920,8 @@ delay(500);
   tft.fillScreen(ILI9341_BLACK);
 
   Serial.begin(115200);
-#ifdef WIFI
+
+#if defined(WIFI) && !defined(PICOW)
   WIFI.begin(115200);
 #endif
   
@@ -4761,6 +4938,32 @@ delay(500);
   
 #if defined(PS2_DATA)
   ps2kb.begin(PS2_DATA, PS2_CLK);
+#endif
+
+#ifdef PICOW
+  for (int i=0; i<16; i++) ssid[i]=EEPROM.read(2+i);
+  ssid[16]=0;
+  for (int i=0; i<16; i++) password[i]=EEPROM.read(18+i);
+  password[16]=0;
+  if (ssid[0]==0) return;
+
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname("PicoNova");
+  Serial.printf("Connecting to '%s' with '%s'\n\r", ssid, password);
+  WiFi.begin(ssid, password);
+  int count=0;
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(100);
+    if (++count>150) return;
+  }
+  Serial.printf("\n\rConnected to WiFi, server at %s:%d\n\r", WiFi.localIP().toString().c_str(), port);
+  server.begin();
+  tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(0,0);
+  tft.print(WiFi.localIP().toString().c_str());
+  tft.println(":4242");
 #endif
 }
 
@@ -4793,11 +4996,14 @@ void loop(void) {
     //if (SerialIO) return;
   }
 #ifdef WIFI
-  else if ((count=WIFI.available()))
+  else if (WIFI && (count=WIFI.available()))
   { hasWIFI = true;
     processWifi(count);
     if (SerialIO) return;
   }
+
+  if (!client) client = server.accept();
+  //if (!client.connected()) client = NULL;
 #endif
 
   // Button presses?
