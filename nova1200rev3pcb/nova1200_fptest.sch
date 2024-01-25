@@ -6,10 +6,10 @@ $Descr A3 16535 11693
 encoding utf-8
 Sheet 1 1
 Title "Computer controlled front panel for Nova 1200 computer"
-Date "2019-05-12"
-Rev "2a"
+Date "2024-01-23"
+Rev "2b"
 Comp "Marcel van Herk"
-Comment1 "Using multicomp switches; swapped lightint and serial"
+Comment1 "Using multicomp switches; swapped lightint and serial; Teensy4 compatible; fix J19"
 Comment2 "Fix: C19 in wrong place for teensy Vin, now VCC; r42 misconnected"
 Comment3 "Error: switch holes too small, optional 7808 touches tracks, swap J3 11, 15"
 Comment4 "SCK for SPI was connected I2C, not to SPI eeprom, now SSCK"
@@ -1865,7 +1865,7 @@ Text Label 1900 750  0    50   ~ 0
 GND
 Text Label 11900 3250 0    50   ~ 0
 GND
-Text Label 10400 3250 0    50   ~ 0
+Text Label 9550 5350 0    50   ~ 0
 GND
 Text Label 9000 3250 0    50   ~ 0
 GND
@@ -1897,8 +1897,6 @@ Wire Wire Line
 	8800 3250 8350 3250
 Wire Wire Line
 	8350 3250 8350 3200
-Wire Wire Line
-	10200 3250 9750 3250
 Wire Wire Line
 	9750 3250 9750 3200
 Wire Wire Line
@@ -2011,12 +2009,12 @@ $EndComp
 $Comp
 L Device:CP1_Small C13
 U 1 1 5C3D947E
-P 10300 3250
-F 0 "C13" V 10528 3250 50  0000 C CNN
-F 1 "CP1_Small" V 10437 3250 50  0000 C CNN
-F 2 "Capacitor_THT:CP_Radial_Tantal_D5.0mm_P5.00mm" H 10300 3250 50  0001 C CNN
-F 3 "~" H 10300 3250 50  0001 C CNN
-	1    10300 3250
+P 9450 5350
+F 0 "C13" V 9678 5350 50  0000 C CNN
+F 1 "CP1_Small" V 9587 5350 50  0000 C CNN
+F 2 "Capacitor_THT:CP_Radial_Tantal_D5.0mm_P5.00mm" H 9450 5350 50  0001 C CNN
+F 3 "~" H 9450 5350 50  0001 C CNN
+	1    9450 5350
 	0    -1   -1   0   
 $EndComp
 $Comp
@@ -3082,13 +3080,13 @@ F 3 "http://ww1.microchip.com/downloads/en/DeviceDoc/21941B.pdf" H 8950 5900 50 
 	1    0    0    -1  
 $EndComp
 Text Label 8950 5600 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 8550 5800 2    50   ~ 0
 GND
 Text Label 8550 5900 2    50   ~ 0
 GND
 Text Label 8550 6000 2    50   ~ 0
-VCC
+SPIVCC
 Text Label 9350 5800 0    50   ~ 0
 SDA
 Text Label 9350 5900 0    50   ~ 0
@@ -3109,13 +3107,13 @@ F 3 "http://ww1.microchip.com/downloads/en/DeviceDoc/21941B.pdf" H 10300 5900 50
 	1    0    0    -1  
 $EndComp
 Text Label 10300 5600 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 9900 5800 2    50   ~ 0
-VCC
+SPIVCC
 Text Label 9900 5900 2    50   ~ 0
 GND
 Text Label 9900 6000 2    50   ~ 0
-VCC
+SPIVCC
 Text Label 10700 5800 0    50   ~ 0
 SDA
 Text Label 10700 5900 0    50   ~ 0
@@ -3136,13 +3134,13 @@ F 3 "http://ww1.microchip.com/downloads/en/DeviceDoc/21941B.pdf" H 8950 6800 50 
 	1    0    0    -1  
 $EndComp
 Text Label 8950 6500 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 8550 6700 2    50   ~ 0
 GND
 Text Label 8550 6800 2    50   ~ 0
-VCC
+SPIVCC
 Text Label 8550 6900 2    50   ~ 0
-VCC
+SPIVCC
 Text Label 9350 6700 0    50   ~ 0
 SDA
 Text Label 9350 6800 0    50   ~ 0
@@ -3163,13 +3161,13 @@ F 3 "http://ww1.microchip.com/downloads/en/DeviceDoc/21941B.pdf" H 10300 6800 50
 	1    0    0    -1  
 $EndComp
 Text Label 10300 6500 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 9900 6700 2    50   ~ 0
-VCC
+SPIVCC
 Text Label 9900 6800 2    50   ~ 0
-VCC
+SPIVCC
 Text Label 9900 6900 2    50   ~ 0
-VCC
+SPIVCC
 Text Label 10700 6700 0    50   ~ 0
 SDA
 Text Label 10700 6800 0    50   ~ 0
@@ -3215,8 +3213,6 @@ Text Label 15300 2100 2    50   ~ 0
 SERIALOUT
 Text Label 15300 2300 2    50   ~ 0
 VCC
-Text Label 14150 3400 2    50   ~ 0
-LIGHTINT
 $Comp
 L Interface_Expansion:MCP23017_SP U4
 U 1 1 5CAA5A29
@@ -3487,9 +3483,9 @@ Text Label 13450 3850 0    50   ~ 0
 SCK
 Text Label 13450 3950 0    50   ~ 0
 SDA
-Text Label 13450 4400 0    50   ~ 0
-SDA
 Text Label 13450 4500 0    50   ~ 0
+SDA
+Text Label 13450 4400 0    50   ~ 0
 SCK
 $Comp
 L Connector:Conn_01x01_Male J20
@@ -3640,9 +3636,9 @@ F 3 "~" H 11050 5800 50  0001 C CNN
 	0    1    1    0   
 $EndComp
 Text Label 11200 5650 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 11200 5800 0    50   ~ 0
-VCC
+SPIVCC
 Wire Wire Line
 	10700 5800 10700 5650
 Wire Wire Line
@@ -4166,7 +4162,7 @@ NoConn ~ 13850 4750
 NoConn ~ 13850 4650
 Text Label 11850 4650 2    50   ~ 0
 GND
-Text Label 11850 4950 2    50   ~ 0
+Text Label 11200 5250 2    50   ~ 0
 LIGHTINT
 Text Label 11850 4750 2    50   ~ 0
 SERIALIN
@@ -4229,17 +4225,8 @@ Wire Wire Line
 Connection ~ 15450 4500
 Text Label 15450 4750 2    50   ~ 0
 TA2
-Wire Wire Line
-	15500 3400 15400 3400
-Text Label 15400 3400 2    50   ~ 0
+Text Label 15700 3400 2    50   ~ 0
 SPIVCC
-Wire Wire Line
-	15500 3400 15700 3400
-Connection ~ 15500 3400
-Wire Wire Line
-	15150 3600 15500 3600
-Wire Wire Line
-	15500 3400 15500 3600
 Wire Wire Line
 	15150 4400 15550 4400
 Wire Wire Line
@@ -4372,8 +4359,6 @@ Text Notes 14450 7450 2    50   ~ 0
 433.92 sender
 Text Label 1700 9900 0    50   ~ 0
 GND
-Text Label 15200 6800 2    50   ~ 0
-TA2
 Text Label 14500 6900 2    50   ~ 0
 VCC
 Wire Wire Line
@@ -4438,29 +4423,7 @@ Wire Wire Line
 Wire Wire Line
 	10150 9500 10150 9150
 Wire Notes Line
-	13200 3800 13650 3800
-Wire Notes Line
 	13650 4550 13200 4550
-Wire Notes Line
-	13200 4550 13200 3800
-Wire Notes Line
-	13650 3800 13650 4550
-Wire Notes Line
-	11950 6750 11950 7000
-Wire Notes Line
-	11950 7000 11650 7000
-Wire Notes Line
-	11650 7000 11650 6750
-Wire Notes Line
-	11650 6750 11950 6750
-Wire Notes Line
-	14050 7150 13800 7150
-Wire Notes Line
-	13800 7150 13800 6950
-Wire Notes Line
-	13800 6950 14050 6950
-Wire Notes Line
-	14050 6950 14050 7150
 $Comp
 L Isolator:SFH617A-1 U23
 U 1 1 5D2DA751
@@ -4555,10 +4518,65 @@ Wire Wire Line
 Connection ~ 13350 2250
 Text Notes 13850 9850 0    50   ~ 0
 Register list I2C:\n20-12 switches high\n20-13 switches low\n21-12 key sense\n21-13 key select + leds\n22-12 addr low\n23-12 add high\n22-13 data low\n23-13 data high\n24-12 interupts (unused)\n24-13 lights\n3C = OLED\n50 = EEPROM0\n
-Text Notes 12200 4950 0    50   ~ 0
-Disconnect for teensy4
-Text Notes 10650 6100 0    50   ~ 0
-Move to 3.3V for Teensy4
+Text Notes 10500 6300 0    50   ~ 0
+Now 3.3V for Teensy4\nCytron maker nano RP2040
 Text Notes 2400 10850 0    50   ~ 0
 Todo: 3v3 vs 5v jumper at DWP\nLevel shifter for I2C connection, lightint\nCheck SPI connector conforms to IL9341 display\nFix few bugs under dotted boxes\nCan it drive original front panel?\nRemove arduino socket?
+$Comp
+L Device:R R64
+U 1 1 65B83E33
+P 11400 5100
+F 0 "R64" H 11470 5146 50  0000 L CNN
+F 1 "2k2" H 11470 5055 50  0000 L CNN
+F 2 "Resistor_THT:R_Axial_DIN0204_L3.6mm_D1.6mm_P7.62mm_Horizontal" V 11330 5100 50  0001 C CNN
+F 3 "~" H 11400 5100 50  0001 C CNN
+	1    11400 5100
+	1    0    0    -1  
+$EndComp
+Wire Wire Line
+	11400 4950 11500 4950
+Wire Wire Line
+	11400 5250 11200 5250
+Wire Wire Line
+	11750 4950 11750 4100
+Wire Wire Line
+	11750 4100 12650 4100
+Wire Wire Line
+	12650 4100 12650 3400
+Wire Wire Line
+	12650 3400 14150 3400
+Connection ~ 11750 4950
+Wire Wire Line
+	11750 4950 11850 4950
+Wire Wire Line
+	11500 4950 11500 5350
+Connection ~ 11500 4950
+Wire Wire Line
+	11500 4950 11750 4950
+$Comp
+L Device:R R65
+U 1 1 65B770FF
+P 11350 5350
+F 0 "R65" H 11420 5396 50  0000 L CNN
+F 1 "3k3" H 11420 5305 50  0000 L CNN
+F 2 "Resistor_THT:R_Axial_DIN0204_L3.6mm_D1.6mm_P7.62mm_Horizontal" V 11280 5350 50  0001 C CNN
+F 3 "~" H 11350 5350 50  0001 C CNN
+	1    11350 5350
+	0    1    1    0   
+$EndComp
+Text Label 11200 5350 2    50   ~ 0
+GND
+NoConn ~ 15200 6800
+Text Notes 13000 6450 2    50   ~ 0
+Supports:\nTeensy3.2\nTeensy3.1\nTeensy4.0
+Wire Wire Line
+	14750 2800 14750 2750
+Text Label 14400 2750 2    50   ~ 0
+SPIVCC
+Wire Wire Line
+	14750 2750 14400 2750
+Wire Wire Line
+	9350 5350 8950 5350
+Wire Wire Line
+	8950 5350 8950 5600
 $EndSCHEMATC
