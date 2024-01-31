@@ -3376,7 +3376,7 @@ $EndComp
 Text Label 11550 800  0    50   ~ 0
 GND
 Text Label 11550 900  0    50   ~ 0
-VCC
+SPIVCC
 $Comp
 L Connector:Conn_01x04_Female J12
 U 1 1 5C943715
@@ -3391,7 +3391,7 @@ $EndComp
 Text Label 12350 800  0    50   ~ 0
 GND
 Text Label 12350 900  0    50   ~ 0
-VCC
+SPIVCC
 $Comp
 L Connector:Conn_01x04_Female J15
 U 1 1 5C95D405
@@ -3406,7 +3406,7 @@ $EndComp
 Text Label 13200 800  0    50   ~ 0
 GND
 Text Label 13200 900  0    50   ~ 0
-VCC
+SPIVCC
 $Comp
 L Connector:Conn_01x04_Female J16
 U 1 1 5C9770C2
@@ -3421,7 +3421,7 @@ $EndComp
 Text Label 14000 800  0    50   ~ 0
 GND
 Text Label 14000 900  0    50   ~ 0
-VCC
+SPIVCC
 $Comp
 L Connector:Conn_01x04_Female J17
 U 1 1 5C990DB2
@@ -3436,7 +3436,7 @@ $EndComp
 Text Label 14800 800  0    50   ~ 0
 GND
 Text Label 14800 900  0    50   ~ 0
-VCC
+SPIVCC
 Wire Wire Line
 	11550 1100 11850 1100
 Wire Wire Line
@@ -3476,9 +3476,9 @@ GND
 Text Label 13450 4200 0    50   ~ 0
 GND
 Text Label 13450 3750 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 13450 4300 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 13450 3850 0    50   ~ 0
 SCK
 Text Label 13450 3950 0    50   ~ 0
@@ -3835,7 +3835,7 @@ L 4xxx:4051 U18
 U 1 1 5D54F4C0
 P 12150 2350
 F 0 "U18" H 12550 2450 50  0000 L CNN
-F 1 "4051" H 12550 2350 50  0000 L CNN
+F 1 "74HCT4051" H 12550 2350 50  0000 L CNN
 F 2 "Package_DIP:DIP-16_W7.62mm" H 12150 2350 50  0001 C CNN
 F 3 "http://www.intersil.com/content/dam/Intersil/documents/cd40/cd4051bms-52bms-53bms.pdf" H 12150 2350 50  0001 C CNN
 	1    12150 2350
@@ -3928,15 +3928,15 @@ F 3 "~" H 15200 1300 50  0001 C CNN
 $EndComp
 Connection ~ 12700 1200
 Text Label 12150 1300 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 13000 1200 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 13750 1300 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 14550 1300 0    50   ~ 0
-VCC
+SPIVCC
 Text Label 15350 1300 0    50   ~ 0
-VCC
+SPIVCC
 Text Notes 14550 3450 2    50   ~ 0
 D0
 Text Notes 14550 3550 2    50   ~ 0
@@ -4360,7 +4360,7 @@ Text Notes 14450 7450 2    50   ~ 0
 Text Label 1700 9900 0    50   ~ 0
 GND
 Text Label 14500 6900 2    50   ~ 0
-VCC
+SPIVCC
 Wire Wire Line
 	15000 5450 15000 5100
 Wire Wire Line
