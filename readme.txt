@@ -15,7 +15,8 @@ See: https://www.youtube.com/watch?v=n7GDlJNpB8Y
 
 arduino_novarev3pcb: Teensy code for my second PCB frontpanel, also simulates a Nova!
 nova1200rev3pcb: corresponding Kikad PCB design
-This frontpanel is NOT in use on my actual Nova1210 computer but runs a Nova simulator
+It is designed for a Teensy 3.3, but can be used with a Teensy4.0 BUT: cut track on pin 20 of U2, wire R55 and R56 to 3.3 volt instead of 5V,
+This frontpanel is NOT in use on my actual Nova1210 computer (it works though) but optionally runs a Nova simulator
 See: https://www.youtube.com/watch?v=eXXXlYzDSzM
 
 lua_assembler: My first attempt at writing CT reconstruction in assembly languange. The required assembler is home written in Lua.
