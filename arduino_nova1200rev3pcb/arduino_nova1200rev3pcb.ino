@@ -31,17 +31,31 @@
 // 20210411: Some work for not SIMULATED mode; fix readData, readAddr, readLights polarity; tested on Nova OK
 // 20210414: Fix reading of carry, is on readLights not readAddr in rev3; port 6 bit 3 does not need control in rev3 pcb
 // 20210418: Added animation of color leds in testmode 7
+// 20230125: Started on Cytron Maker Nano RP2040 mode (#define RP2040)
+// 20230128: It is not working for small LCDs, will test to replace CD4051 by 74HCT4051; 
+//           removed TEENSY35 standalone stuff; delay when switching lcd
+// 20230131: Fixed Cytron Maker Nano (must use 74HCT4051); add its leds and sound
+//           Note: serial output to Nova is not yet working for Maker even on Serial2 (wrong pins?)
+#define RP2040
 
 #include <U8g2lib.h>
 #include <EEPROM.h>
 #define TEENSY
 
-#ifdef __MK64FX512__
-#define TEENSY35
+#ifdef RP2040
+#define SDA D12
+#define SCLK D13
+#else
+#define SDA A8
+#define SCLK A9
 #endif
 
 // graphics library
-U8G2_SSD1306_128X32_UNIVISION_F_SW_I2C u8g2(U8G2_R0, A9, A8); 
+#ifdef RP2040
+U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
+#else
+U8G2_SSD1306_128X32_UNIVISION_F_SW_I2C u8g2(U8G2_R0, SCLK, SDA); 
+#endif
 U8G2LOG u8g2log;
 
 #define SIMULATED
@@ -55,10 +69,6 @@ int NovaPC=0;
 
 void Serialwrite(int a)
 { Serial.write(a);
-#ifdef TEENSY35
-  selectDisplay(0);
-  u8g2log.write(a);
-#endif
 }
 
 #define MEMSIZE 16384
@@ -70,16 +80,23 @@ void Serialwrite(int a)
 
 #endif
 
+#ifndef RP2040
 #include <SoftWire.h>
-SoftWire softwarei2c(A8, A9);
+SoftWire softwarei2c(SDA, SCLK);
 #define Wire softwarei2c
+#else
+#include <Wire.h>
+#include <EasyNeoPixels.h>
+#endif
 
 // I2C suppport routines
 bool wireFail=false;
 
 void WireEnd() {
+#ifndef RP2040
   if (!wireFail);
     Wire.end();
+#endif
 }
 
 void WireBegin() {
@@ -87,19 +104,26 @@ void WireBegin() {
   static byte rxbuffer[64];
   static byte txbuffer[64];
   if (!configured) {
-    pinMode(A8, INPUT);
-    pinMode(A9, INPUT);
-    if (analogRead(A8)<1000) wireFail=true;
-    if (analogRead(A8)<1000) wireFail=true;
+#ifndef RP2040
+    pinMode(SDA, INPUT);
+    pinMode(SCLK, INPUT);
+    if (analogRead(SDA)<1000) wireFail=true;
+    if (analogRead(SCLK)<1000) wireFail=true;
     if (wireFail) return;
-    pinMode(A8, OUTPUT);
-    pinMode(A9, OUTPUT);
+    pinMode(SDA, OUTPUT);
+    pinMode(SCLK, OUTPUT);
+    Wire.begin();
     Wire.setDelay_us(1);
     Wire.setRxBuffer(rxbuffer, 64);
     Wire.setTxBuffer(txbuffer, 64);
+#else
+    Wire.setSDA(SDA);
+    Wire.setSCL(SCLK);
+    Wire.begin();
+    delay(10);
+#endif
     configured = true;
   }
-  Wire.begin();
 }
 
 void writeByte(byte chip, byte reg, byte data) {
@@ -185,9 +209,6 @@ unsigned short readAddr()
 int NovaModeL=0;
 void writeLights(int A)
 { 
-#ifdef TEENSY35
-  return;
-#endif
   WireBegin();
   static bool configured=false;
   if (NovaModeL!=2 || !configured) {
@@ -230,20 +251,6 @@ int readSwitches(void) {
 
 // enable ONE color led (1..10) from matrix next to control switches, 0 = disable, -1=restore output
 void writeColor(int i) {
-#ifdef TEENSY35
-  if (i<0) return;
-  i = ~i;
-  for (byte a=18;  a<22; a++) pinMode(a, OUTPUT); 
-  if (i&1) pinMode(18, INPUT); 
-  if (i&2) pinMode(19, INPUT); 
-  if (i&4) pinMode(20, INPUT); 
-  if (i&8) pinMode(21, INPUT); 
-  digitalWrite(18, i&1); // output 4bit data
-  digitalWrite(19, (i>>1)&1);
-  digitalWrite(20, (i>>2)&1);
-  digitalWrite(21, (i>>3)&1);
-  return;
-#endif
   static bool configured = false;
   static int prevcolor=0;
   if (i<0) {
@@ -333,18 +340,6 @@ char keyCodes[] = {'T', 'R', 'P', 'N', 'L',   'S', 'Q', 'O', 'M', 'K',
 
 // read keyboard and/or control switches matrix, note keyboard matrix drive multiplexed with color leds
 int readKeys(void) {
-#ifdef TEENSY35
-  for (byte a=2; a<11; a++) pinMode(a, INPUT_PULLUP);
-  if(digitalRead(2)==0) {delay(50); if(digitalRead(2)==0) return '0'; writeColor(1);}
-  if(digitalRead(4)==0) {delay(50); if(digitalRead(4)==0) return '1'; writeColor(2);}
-  if(digitalRead(7)==0) {delay(50); if(digitalRead(7)==0) return '2'; writeColor(4);}
-  if(digitalRead(9)==0) {delay(50); if(digitalRead(9)==0) return '3'; writeColor(0);}
-  if(digitalRead(5)==0) {delay(50); if(digitalRead(5)==0) return '4'; }
-  if(digitalRead(8)==0) {delay(50); if(digitalRead(8)==0) return '5'; }
-  if(digitalRead(10)==0) {delay(50); if(digitalRead(10)==0) return '6'; } 
-  if(digitalRead(3)==0) {delay(50); if(digitalRead(3)==0) return '7'; } 
-  return 0;
-#endif
   WireBegin();
   static bool configured = false;
   if (!configured) {
@@ -399,34 +394,45 @@ Register list on 74LS173 chips:
 7 = write control H (was 11)
 */
 
+
+#ifdef RP2040
+#define SELR1 D5
+#define FIRSTD D26
+#define FIRSTA D8
+#define LASTA D17
+#else
+#define SELR1 3
+#define FIRSTD 26
+#define FIRSTA 6
+#define LASTA 8
+#endif
+
 // write Nova Data or Instruction register nibble to 74LS173 register
 void WriteReg(byte chip, byte value) {
-#ifdef TEENSY35
-  return;
-#endif
   value=~value;      // negate value to make active high
   static bool configured = false;
   if (!configured) {
-    for (byte i=6;  i<9; i++) pinMode(i, OUTPUT); 
-    for (byte i=18; i<22; i++) pinMode(i, OUTPUT); 
-    pinMode(3, OUTPUT);
-    digitalWrite(3, 1);
+    for (byte i=FIRSTA; i<FIRSTA+2; i++) pinMode(i, OUTPUT); 
+    pinMode(LASTA, OUTPUT);
+    for (byte i=FIRSTD; i<FIRSTD+4; i++) pinMode(i, OUTPUT); 
+    pinMode(SELR1, OUTPUT);
+    digitalWrite(SELR1, 1);
     configured = true;
   }
 
-  digitalWrite(18, value&1); // output 4bit data
-  digitalWrite(19, (value>>1)&1);
-  digitalWrite(20, (value>>2)&1);
-  digitalWrite(21, (value>>3)&1);
+  digitalWrite(FIRSTD, value&1); // output 4bit data
+  digitalWrite(FIRSTD+1, (value>>1)&1);
+  digitalWrite(FIRSTD+2, (value>>2)&1);
+  digitalWrite(FIRSTD+3, (value>>3)&1);
   
-  digitalWrite(6, chip&1);     // output 3bits address
-  digitalWrite(7, (chip>>1)&1);
-  digitalWrite(8, (chip>>2)&1);
+  digitalWrite(FIRSTA, chip&1);     // output 3bits address
+  digitalWrite(FIRSTA+1, (chip>>1)&1);
+  digitalWrite(LASTA, (chip>>2)&1);
 
   delayMicroseconds(1);     // pulse SELR1 low
-  digitalWrite(3, 0);
+  digitalWrite(SELR1, 0);
   delayMicroseconds(1);
-  digitalWrite(3, 1);
+  digitalWrite(SELR1, 1);
 }
 
 void writeDataReg(unsigned short d)    // set data register
@@ -733,22 +739,36 @@ void resetNova(void)
 #define U8LOG_HEIGHT 5
 uint8_t u8log_buffer[U8LOG_WIDTH*U8LOG_HEIGHT];
 
-// drive 4051 multiplexer for 5 I2C displays 0=left, 4=right
-void selectDisplay(byte disp) {
-#ifdef TEENSY35
-  return;
+#ifdef RP2040
+#define ENOLED0 D19
+#define ENOLED1 D16
+#define ENOLED2 D18
+#else
+#define ENOLED0 9
+#define ENOLED1 10
+#define ENOLED2 15
 #endif
+
+// drive 74HCT4051 (do not use CD4051 !) multiplexer for 5 I2C displays 0=left, 4=right
+void selectDisplay(byte disp) {
   static bool configured = false;
+  static byte prevDisp = 15;
   if (!configured) {
-    pinMode(9, OUTPUT);  // ENOLED0
-    pinMode(10, OUTPUT); // ENOLED1
-    pinMode(15, OUTPUT); // ENOLED2
+    pinMode(ENOLED0, OUTPUT);  // ENOLED0
+    pinMode(ENOLED1, OUTPUT); // ENOLED1
+    pinMode(ENOLED2, OUTPUT); // ENOLED2
     configured = true;
   }
-    
-  digitalWrite(9, disp&1);
-  digitalWrite(10, (disp>>1)&1);
-  digitalWrite(15, (disp>>2)&1);
+
+  if (prevDisp != disp)
+  { delay(1);
+    prevDisp = disp;
+  }
+
+  digitalWrite(ENOLED0, disp&1);
+  digitalWrite(ENOLED1, (disp>>1)&1);
+  digitalWrite(ENOLED2, (disp>>2)&1);
+  delay(1);
 }
 
 bool DrawCursor=false;
@@ -757,6 +777,27 @@ void lcdprint(String text)
 { selectDisplay(0);
   u8g2.setFont(defaultFont);
   u8g2.print(text);
+  u8g2.sendBuffer();
+}
+
+void lcdprint(int num)
+{ selectDisplay(0);
+  u8g2.setFont(defaultFont);
+  u8g2.print(num);
+  u8g2.sendBuffer();
+}
+
+void lcdprint(unsigned int num)
+{ selectDisplay(0);
+  u8g2.setFont(defaultFont);
+  u8g2.print(num);
+  u8g2.sendBuffer();
+}
+
+void lcdprint(uint8_t c)
+{ selectDisplay(0);
+  u8g2.setFont(defaultFont);
+  u8g2.print(c);
   u8g2.sendBuffer();
 }
 
@@ -1354,6 +1395,16 @@ void serialDebug(int mode) {
 // TODO: detect
 unsigned short memsize=16384;
 
+void writeLed(int led, int r, int g, int b)
+{ 
+#ifdef RP2040  
+  if (led<2) writeEasyNeoPixel(led, r, g, b);
+#else
+  pinMode(13, OUTPUT);
+  digitalWrite(13, r!=0);
+#endif
+}
+
 void tests(int func)
 { while (readKeys());
 
@@ -1370,7 +1421,7 @@ void tests(int func)
       WriteReg(7, count/16);
 
       // test that read data gives back data (only if hand enabled)
-      digitalWrite(13, readData()!=((unsigned)32768>>(count&15)));
+      writeLed(0, readData()!=((unsigned)32768>>(count&15)), 0, 0);
       delay(100);
       //debugPrint(a0, a1, 11, 11, readAddr(), readData()); 
       if (readKeys() != 0) break;
@@ -1404,7 +1455,7 @@ void tests(int func)
       unsigned int ad = 0; // a&16383;
       deposit(ad, v);
       unsigned int c = examine(ad);
-      digitalWrite(13, v!=c);
+      writeLed(0, v!=c?255:0, 0, 0);
       if (readKeys()) break;
     }
     lcdsetCursor(0,1);
@@ -1478,7 +1529,7 @@ void tests(int func)
       unsigned int v = random(65535); // a&1?0x5555:0xaaaa;
       deposit(ad, v);
       unsigned int c = examine(ad);
-      digitalWrite(13, v!=c);
+      writeLed(0, v!=c?255:0, 0, 0);
       deposit(ad, org);
       if (readKeys()) break;
     }
@@ -2187,7 +2238,10 @@ String("tape list             List all tapes in eeprom and code memory\r\n")+
 String("test n                run test function\r\n")+
 String("version               print version\r\n")+
 String("lcd line text         display line 0..4 on LCD\r\n")+
-String("led N                 program GPIO and Arduino LED (400)\r\n")+
+String("led N                 program colored lights and Arduino LEDs\r\n")+
+#ifdef RP2040
+String("beep N                beep on frequency N\r\n")+
+#endif
 String("adc N                 read 2,3=A2,A3\r\n")+
 String("dac N                 write A14\r\n")+
 String("reads                 read switches\r\n")+
@@ -2263,7 +2317,11 @@ void processSerial(int count)
         return;
       }
 #else
+#ifdef RP2040
+      Serial2.write(b);
+#else
       Serial1.write(b);
+#endif
 #endif      
 
 #else
@@ -2494,7 +2552,8 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', 5);
         unsigned short a = readOct(line, pos1);
         if (pos2>=0) {
-          String t=line.substring(pos2).toLowerCase();
+          String t=line.substring(pos2);
+          t.toLowerCase();
 
           // shortcuts to frequent routines, must be in memory to work
           if      (t==" .mul"   ) deposit(a, 0x043e); // JMS @3e etc
@@ -2521,7 +2580,8 @@ void processSerial(int count)
           }
 
           else for(int b=0; b<=65535;)
-          { String s = printDisas(b, OCT).toLowerCase();
+          { String s = printDisas(b, OCT);
+            s.toLowerCase();
             if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
               b+=63; 
             // must be different instruction (all coded in high 10 bits)
@@ -2688,14 +2748,22 @@ void processSerial(int count)
       else if (line.startsWith("led "))
       { int pos1 = 4;
         unsigned short a = readOct(line, pos1);
-        //gpio(a & 255);
-        digitalWrite(13, (a>>8)&1);
-        //digitalWrite(12, (a>>9)&1);
-        //digitalWrite(11, (a>>10)&1);
+        writeLed(0, ((a>>4)&3)*32, ((a>>6)&3)*32, ((a>>8)&3)*32);
+        writeLed(1, ((a>>10)&3)*32, ((a>>12)&3)*32, ((a>>14)&3)*32);
         writeColor(a&15);
         nextcmd = "led "+toOct(a+1);
       }
           
+      // make sound on Cytron maker nano
+      else if (line.startsWith("beep "))
+      { int pos1 = 5;
+        unsigned short a = readOct(line, pos1);
+#ifdef RP2040        
+        tone(D22, a, 200);
+#endif
+        nextcmd = "beep "+toOct(a+1);
+      }
+
       // program DAC
       else if (line.startsWith("dac "))
       { int pos1 = 4;
@@ -2742,14 +2810,20 @@ void processSerial(int count)
         nextcmd = "writel "+toOct(a+1);
       }
 
+#ifdef RP2040
+#define ADCMASK 3
+#else
+#define ADCMASK 7
+#endif
+
       // read ADC
       else if (line.startsWith("adc"))
       { 
         int pos1 = 4;
-        int pins[8] = {A0, A1, A2, A3, A4, A5, A6, A7};
+        int pins[8] = {A0, A1, A2, A3, A3+1, A3+2, A3+3, A3+4};
         int pin=readOct(line, pos1);
-        pinMode(pins[pin&7], INPUT);
-        Serial.println("adc"+String(pin)+"="+toOct(analogRead(pins[pin&7])));
+        pinMode(pins[pin&ADCMASK], INPUT);
+        Serial.println("adc"+String(pin)+"="+toOct(analogRead(pins[pin&ADCMASK])));
         nextcmd = "adc";
       }
 
@@ -2882,7 +2956,11 @@ void processSerial(int count)
       else if (line.startsWith("serw "))
       { int pos1 = 5;
         unsigned short a = readOct(line, pos1);
+#ifdef RP2040
+        Serial2.write(a);
+#else
         Serial1.write(a);
+#endif
         nextcmd = "serw "+toOct(a+1);
       }
 
@@ -2896,7 +2974,8 @@ void processSerial(int count)
       // absolute tape loader using data in eeprom; tape data is stored after 16 bytes $$llFILENAME@; where ll is its 16 bits length
       else if (line.startsWith("tape "))
       { int pos1 = 5;
-        String filename = line.substring(pos1, 99).toUpperCase(); // +"@";
+        String filename = line.substring(pos1, 99);
+        filename.toUpperCase(); // +"@";
 
         // absolute tape loader using program data
         if (filename==".BASIC")
@@ -3015,11 +3094,18 @@ void processSerial(int count)
 }
 
 void setup() {
-  delay(10);
+  selectDisplay(0); // disabled
+#ifdef RP2040
+  Wire.setClock(1000000);
+  Wire.setTimeout(200, true);
+  setupEasyNeoPixels(D11, 2);
+  pinMode(D22, OUTPUT); // buzzer
+#endif
 
+#ifndef RP2040
   pinMode(13, OUTPUT); // LED doubles with SSCLK for SPI
-
   digitalWrite(13, HIGH);
+#endif
 
   // reset all I2C buffer chips
   WireBegin();
@@ -3032,14 +3118,18 @@ void setup() {
   }
   WireEnd();
 
+#ifndef RP2040
   digitalWrite(13, LOW);
+#endif
 
   // program all lights to be input
   readAddr();
   readData();
   readLights();
 
+#ifndef RP2040
   digitalWrite(13, LOW);
+#endif
 
   // you MUST initialize all displays
   for (int i=0; i<5; i++)
@@ -3047,7 +3137,9 @@ void setup() {
     u8g2.begin();
   }
 
+#ifndef RP2040
   digitalWrite(13, HIGH);
+#endif
 
   display(1,"DATA GENERAL");
   display(2, "CORPORATION");
@@ -3057,7 +3149,9 @@ void setup() {
   display(4, "NOVA 1210");
 #endif
 
+#ifndef RP2040
   digitalWrite(13, LOW);
+#endif
 
   writeControlReg(0); // all NOVA control signals inactive
 
@@ -3068,7 +3162,9 @@ void setup() {
   u8g2log.setLineHeightOffset(0); // set extra space between lines in pixel, this can be negative
   u8g2log.setRedrawMode(0);   // 0: Update screen with newline, 1: Update screen for every char  
 
+#ifndef RP2040
   digitalWrite(13, HIGH);
+#endif
 
   selectDisplay(3);
   u8g2log.print("Nova 1210 front panel");
@@ -3082,13 +3178,9 @@ void setup() {
   u8g2log.print("Contains parts of simhv39-0\n");
 #endif
 
-// keep last screen on Teensy3.5 (no front panel)
-#ifndef TEENSY35
-  selectDisplay(0);
-  u8g2.clear();
-#endif
-
+#ifndef RP2040
   digitalWrite(13, LOW);
+#endif
 
   writeDataReg(0);
   writeInstReg(0); // TODO: correct start status
@@ -3098,9 +3190,17 @@ void setup() {
   Serial.begin(115200);     // usb serial for debug output
   Serial.setTimeout(5000);
 
+#ifndef RP2040
   Serial1.setTX(1); // serial to nova
   Serial1.setRX(0);
   Serial1.begin(4800,SERIAL_8N1);
+#else
+  //Serial2.setTX(D4);
+  //Serial2.setRX(D3);
+  //Serial2.begin(4800,SERIAL_8N1);
+#endif
+
+  lcdclear();
 }
 
 short i=0;
@@ -3109,11 +3209,19 @@ int startKey=0;
 void loop(void) {
   unsigned long currentMillis = millis();
   
+#ifdef RP2040
+  if (Serial2.available())
+  { byte b = Serial2.read();
+    Serial2.write(b&0x7f);
+    return;
+  }
+#else
   if (Serial1.available())
   { byte b = Serial1.read();
     Serial.write(b&0x7f);
     return;
   }
+#endif
 
   // wait and detect halt condition; special bits in HALT are interpreted as 'OS' instructions
 #ifdef SIMULATED
@@ -3193,7 +3301,9 @@ void loop(void) {
 #endif
 #ifndef TEENSY
         delay(50); // must be shorter than 100 ms above!
-        digitalWrite(13, 0);
+#ifndef RP2040
+        writeColor(0);
+#endif
 #endif
         examine(haltAddress);
         continueNova();
@@ -3244,12 +3354,14 @@ void loop(void) {
       }
       else if (haltInstruction==ADC)   // adc on teensy
       { 
+#ifndef RP2040
 #ifdef TEENSY
         pinMode(A0, INPUT);
         depositAC(0, analogRead(A0));
 #else
         pinMode(A1, INPUT);
         depositAC(0, analogRead(A1));
+#endif
 #endif
         examine(haltAddress);
         continueNova();
