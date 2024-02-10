@@ -32,26 +32,45 @@
 // 20210414: Fix reading of carry, is on readLights not readAddr in rev3; port 6 bit 3 does not need control in rev3 pcb
 // 20210418: Added animation of color leds in testmode 7
 // 20230125: Started on Cytron Maker Nano RP2040 mode (#define RP2040)
-// 20230128: It is not working for small LCDs, will test to replace CD4051 by 74HCT4051; 
+// 20230128: It is not working for small LCDs, will replace CD4051 by 74HCT4051
 //           removed TEENSY35 standalone stuff; delay when switching lcd
 // 20230131: Fixed Cytron Maker Nano (must use 74HCT4051); add its leds and sound
 //           Note: serial output to Nova is not yet working for Maker even on Serial2 (wrong pins?)
-#define RP2040
+// 20230203: Added Arduino Nano ESP32 (for its Wifi, not yet enabled)
+// 20230210: Wifi is working using internal eeprom-stored credentials; rest uses external eeprom
+// 20230210: Removed TEENSY define; stop support for original Nano
+
+//#define RP2040    // Cytron Maker RP2040 (3.3V)
+#define NANOESP32   // or Arduino Nano ESP32 (3.3V)
+                    // default Teensy3.2 (5V) or Teensy4.1 (3.3V)
+// With 3V3 boards modify PC to protect lightint & I2c pins
+
+#ifdef NANOESP32
+#include "TelnetStream.h"
+#include <ESPTelnet.h>
+#include <MergedStreams.h>
+TelnetStream telnets;
+ESPTelnet etelnet;
+MergedStreams mergedStreams(Serial, telnets);
+#define Serial mergedStreams // mergedStreams
+#endif
 
 #include <U8g2lib.h>
 #include <EEPROM.h>
-#define TEENSY
 
-#ifdef RP2040
+#if defined(RP2040)
 #define SDA D12
 #define SCLK D13
+#elif defined(NANOESP32)
+#define SDA A4
+#define SCLK A5
 #else
 #define SDA A8
 #define SCLK A9
 #endif
 
 // graphics library
-#ifdef RP2040
+#if defined(RP2040) || defined(NANOESP32)
 U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
 #else
 U8G2_SSD1306_128X32_UNIVISION_F_SW_I2C u8g2(U8G2_R0, SCLK, SDA); 
@@ -80,12 +99,15 @@ void Serialwrite(int a)
 
 #endif
 
-#ifndef RP2040
+#if defined(RP2040)
 #include <SoftWire.h>
 SoftWire softwarei2c(SDA, SCLK);
 #define Wire softwarei2c
 #else
 #include <Wire.h>
+#endif
+
+#ifdef RP2040
 #include <EasyNeoPixels.h>
 #endif
 
@@ -93,10 +115,11 @@ SoftWire softwarei2c(SDA, SCLK);
 bool wireFail=false;
 
 void WireEnd() {
-#ifndef RP2040
+#if defined(RP2040) || defined(NANOESP32)
+  return;
+#endif
   if (!wireFail);
     Wire.end();
-#endif
 }
 
 void WireBegin() {
@@ -104,7 +127,19 @@ void WireBegin() {
   static byte rxbuffer[64];
   static byte txbuffer[64];
   if (!configured) {
-#ifndef RP2040
+#if defined(RP2040)
+    Wire.setSDA(SDA);
+    Wire.setSCL(SCLK);
+    Wire.setTimeout(200, true);
+    Wire.begin();
+    Wire.setClock(1000000);
+    delay(10);
+#elif defined(NANOESP32)
+    Wire.setPins(SDA, SCLK);
+    Wire.begin();
+    Wire.setClock((unsigned int)1250000);
+    delay(10);
+#else
     pinMode(SDA, INPUT);
     pinMode(SCLK, INPUT);
     if (analogRead(SDA)<1000) wireFail=true;
@@ -113,14 +148,9 @@ void WireBegin() {
     pinMode(SDA, OUTPUT);
     pinMode(SCLK, OUTPUT);
     Wire.begin();
-    Wire.setDelay_us(1);
+    Wire.setDelay_us(0);
     Wire.setRxBuffer(rxbuffer, 64);
     Wire.setTxBuffer(txbuffer, 64);
-#else
-    Wire.setSDA(SDA);
-    Wire.setSCL(SCLK);
-    Wire.begin();
-    delay(10);
 #endif
     configured = true;
   }
@@ -400,6 +430,11 @@ Register list on 74LS173 chips:
 #define FIRSTD D26
 #define FIRSTA D8
 #define LASTA D17
+#elif defined(NANOESP32)
+#define SELR1 D5
+#define FIRSTD A0
+#define FIRSTA D8
+#define LASTA D10
 #else
 #define SELR1 3
 #define FIRSTD 26
@@ -739,10 +774,14 @@ void resetNova(void)
 #define U8LOG_HEIGHT 5
 uint8_t u8log_buffer[U8LOG_WIDTH*U8LOG_HEIGHT];
 
-#ifdef RP2040
+#if defined(RP2040)
 #define ENOLED0 D19
 #define ENOLED1 D16
 #define ENOLED2 D18
+#elif defined(NANOESP32)
+#define ENOLED0 D11
+#define ENOLED1 D12
+#define ENOLED2 D13
 #else
 #define ENOLED0 9
 #define ENOLED1 10
@@ -1397,8 +1436,14 @@ unsigned short memsize=16384;
 
 void writeLed(int led, int r, int g, int b)
 { 
-#ifdef RP2040  
+#if defined(RP2040)
   if (led<2) writeEasyNeoPixel(led, r, g, b);
+#elif defined(NANOESP32)
+  if (led==0)
+  { analogWrite(LED_RED, 255-r);
+    analogWrite(LED_GREEN, 255-g);
+    analogWrite(LED_BLUE, 255-b);
+  }
 #else
   pinMode(13, OUTPUT);
   digitalWrite(13, r!=0);
@@ -1560,62 +1605,44 @@ void tests(int func)
   }
 }
 
-// read 128 byte block from EEPROM to Nova memory A
+// read 128 byte block from external EEPROM to Nova memory A
 void readBlockfromEEPROM(int block, unsigned int A)
 { writeColor(2);
-  if (block<4)
-  { unsigned int address=block*128;
-    for (int i=0; i<64; i++)
-    { deposit(A+i, EEPROM.read(address+i*2)<<8|EEPROM.read(address+i*2+1));
-    }
-  }
-  else
-  { int deviceaddress = 0x50;
-    if (block>515) deviceaddress+=4;
-    unsigned int address=(block-4)*128; // overflow is OK needs 16 bit
-    unsigned char buffer[16];
-    for(int j=0; j<8; j++)
-    { i2c_eeprom_read_buffer(deviceaddress, address+j*16, buffer, 16);
-      for (int i=0; i<8; i++)
-      { deposit(A+i+j*8, (buffer[i*2]<<8)|buffer[i*2+1]);
-      }
+  int deviceaddress = 0x50;
+  if (block>511) deviceaddress+=4;
+  unsigned int address=block*128; // overflow is OK needs 16 bit
+  unsigned char buffer[16];
+  for(int j=0; j<8; j++)
+  { i2c_eeprom_read_buffer(deviceaddress, address+j*16, buffer, 16);
+    for (int i=0; i<8; i++)
+    { deposit(A+i+j*8, (buffer[i*2]<<8)|buffer[i*2+1]);
     }
   }
   writeColor(0);
 }
 
-// write 128 byte block from EEPROM to Nova memory A
+// write 128 byte block from external EEPROM to Nova memory A
 void writeBlocktoEEPROM(int block, unsigned int A)
 { writeColor(1);
-  if (block<4)
-  { int address=block*128;
-    for (int i=0; i<64; i++)
-    { unsigned short s=examine(A+i);
-      EEPROM.write(address+i*2, s>>8);
-      EEPROM.write(address+i*2+1, s&255);
+  int deviceaddress = 0x50;
+  if (block>511) deviceaddress+=4;
+  unsigned int address=block*128; // overflow is OK needs 16 bit
+  byte buffer[26];
+  for (int j=0; j<8; j++)
+  { for (int i=0; i<8; i++)
+    { unsigned short s=examine(A+j*8+i);
+      buffer[i*2]=s>>8;
+      buffer[i*2+1]=s&255;
     }
-  }
-  else
-  { int deviceaddress = 0x50;
-    if (block>515) deviceaddress+=4;
-    unsigned int address=(block-4)*128; // overflow is OK needs 16 bit
-    byte buffer[26];
-    for (int j=0; j<8; j++)
-    { for (int i=0; i<8; i++)
-      { unsigned short s=examine(A+j*8+i);
-        buffer[i*2]=s>>8;
-        buffer[i*2+1]=s&255;
-      }
-      i2c_eeprom_write_page(deviceaddress, address+j*16, buffer, 16);
-      delay(5);
-    }
+    i2c_eeprom_write_page(deviceaddress, address+j*16, buffer, 16);
+    delay(5);
   }
   writeColor(0);
 }
 
 String store()
 { unsigned short a = 0;
-  unsigned short b = 1028-memsize/64;
+  unsigned short b = 1024-memsize/64;
   unsigned short c = memsize/64;
   unsigned short s=a;
   for (int block=b; block<b+c; block++,a+=64)
@@ -1629,7 +1656,7 @@ String store()
 
 String restore()
 { unsigned short a = 0;
-  unsigned short b = 1028-memsize/64;
+  unsigned short b = 1024-memsize/64;
   unsigned short c = memsize/64;
   unsigned short s=a;
   for (int block=b; block<b+c; block++,a+=64)
@@ -2235,6 +2262,7 @@ String("store                 store all RAM to highest eeprom blocks\r\n")+
 String("restore               restore RAM from highest eeprom blocks\r\n")+
 String("tape filename         Load tape data from eeprom or code memory\r\n")+
 String("tape list             List all tapes in eeprom and code memory\r\n")+
+//String("tapex                 Load tape from xmode\r\n")+
 String("test n                run test function\r\n")+
 String("version               print version\r\n")+
 String("lcd line text         display line 0..4 on LCD\r\n")+
@@ -2254,6 +2282,9 @@ String("memory address        hex dump memory block to output\r\n")+
 String("plot address range    plot 80 values (+/- range)\r\n")+
 String("vis address count     visualize memory as gray scale, default 1600 chars\r\n")+
 String("init                  init Arduino supervisor\r\n")+
+#ifdef NANOESP32
+String("wifi SSID|password|forget set WIFI identification or forget it\r\n")+
+#endif
 String(":nnaaaa[hhhh]         Deposit nn memory locations (a and h hex)\r\n")+
 String(";naaaa[hh*16]         Write line n in eeprom block (a and h hex)\r\n")+
 String("? $                   Write in hex ?lights ADSS $regs 1234pC\r\n")+
@@ -2283,6 +2314,9 @@ String history[NHISTORY];
 int nhist=0;
 bool kmode=false;
 int kaddress=0;
+char ssid[18];
+char password[18];
+bool innewline=false;
 
 void processSerial(int count)
 { byte b = Serial.read();
@@ -2306,8 +2340,6 @@ void processSerial(int count)
     }
     else
     { 
-#ifdef TEENSY
-
 #ifdef SIMULATED
       //if (!DEV_IS_DONE(INT_TTI))
       { ttibuf= b;
@@ -2317,14 +2349,13 @@ void processSerial(int count)
         return;
       }
 #else
+
 #ifdef RP2040
       Serial2.write(b);
 #else
       Serial1.write(b);
 #endif
-#endif      
 
-#else
       bool runn = readLights()&1;
       if (runn) a=stopNova();
       deposit(CHARIN, b);
@@ -2389,14 +2420,18 @@ void processSerial(int count)
         Serial.write(8);
       }
     }
-    else if (b != '\r' && b != '\n') 
+    else if (b != '\r' && b != '\n' && b != 0) 
     { line.concat(char(b)); 
       Serial.write(b);
+      innewline=false;
     }
 
     // enter
-    if (b == '\r') 
-    { // auto suggest next command
+    if (b == '\r' || b == '\n' || b == 0)
+    { if (innewline && b!='\r') return;
+
+      // auto suggest next command
+      innewline=true;
       if (line=="" && nextcmd!="")
       { line=nextcmd;
         Serial.write("\33[2K\r");
@@ -2827,16 +2862,15 @@ void processSerial(int count)
         nextcmd = "adc";
       }
 
-      // list eeprom block in hex
+      // list extermal eeprom block in hex
       else if (line.startsWith("eeprom "))
       { int pos1 = 7;
         unsigned short a = readOct(line, pos1);
         int deviceaddress = 0x50;                  
-        if (a>515) deviceaddress+=4;
+        if (a>511) deviceaddress+=4;
         for (short i=0; i<128; i++)
         { String s;
-          if (a<4) s = toHex2(EEPROM.read(a*128+i));
-          else     s = toHex2(i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i));
+          s = toHex2(i2c_eeprom_read_byte(deviceaddress, a*128+i));
           if ((i&15)==15) Serial.println(s); else Serial.print(s);
         }
         nextcmd = "eeprom "+toOct(a+1);
@@ -2889,10 +2923,9 @@ void processSerial(int count)
         unsigned short n = readHex(m+1,1);
         unsigned short a=readHex(m+2,4);
         int deviceaddress = 0x50;
-        if (a>515) deviceaddress+=4;
+        if (a>511) deviceaddress+=4;
         for (short i=0; i<16; i++) m[i]=readHex(m+6+i*2,2);
-        if (a<4) for (short j=0; j<16; j++) EEPROM.write(a*128+n*16+j, m[j]);
-        else     i2c_eeprom_write_page(deviceaddress, (a-4)*128+n*16, (byte *)m, 16);
+        i2c_eeprom_write_page(deviceaddress, a*128+n*16, (byte *)m, 16);
         nextcmd = "";
       }
 
@@ -3001,14 +3034,14 @@ void processSerial(int count)
           
         // search all 128 character blocks on external eeprom (address 4 and up)
         int block=-1;
-        for(int a=4; a<1028; a++)
-        { if (a>515) deviceaddress+=4;
+        for(int a=0; a<1024; a++)
+        { if (a>511) deviceaddress+=4;
           block = -1;
-          if (i2c_eeprom_read_byte(deviceaddress, (a-4)*128+0)=='$')
-          { if (i2c_eeprom_read_byte(deviceaddress, (a-4)*128+1)=='$')
+          if (i2c_eeprom_read_byte(deviceaddress, a*128+0)=='$')
+          { if (i2c_eeprom_read_byte(deviceaddress, a*128+1)=='$')
             { block = a;
               for (unsigned short i=0; i<16; i++)
-              { ename[i] = i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i+4);
+              { ename[i] = i2c_eeprom_read_byte(deviceaddress, a*128+i+4);
                 if (ename[i]==0) 
                 { break;
                 }
@@ -3018,7 +3051,7 @@ void processSerial(int count)
               }
               if (filename=="LIST")
               { String str((char *)ename);
-                int len = i2c_eeprom_read_byte(deviceaddress, (a-4)*128+2) + i2c_eeprom_read_byte(deviceaddress, (a-4)*128+3)*256;
+                int len = i2c_eeprom_read_byte(deviceaddress, a*128+2) + i2c_eeprom_read_byte(deviceaddress, (a-4)*128+3)*256;
                 Serial.println(str+" at block "+toOct(a)+"; length "+toOct(len)+" next block: "+toOct(a+(int)ceil((len+16)/128)));
               }
             }
@@ -3026,8 +3059,7 @@ void processSerial(int count)
           if (block>=4) break;
         }
         if (block>=0 && filename!="LIST")
-        { block-=4;
-          int len = i2c_eeprom_read_byte(deviceaddress, block*128+2) + i2c_eeprom_read_byte(deviceaddress, block*128+3)*256;
+        { int len = i2c_eeprom_read_byte(deviceaddress, block*128+2) + i2c_eeprom_read_byte(deviceaddress, block*128+3)*256;
           Serial.println("Loading tape "+filename+" at eeprom block "+toOct(block)+"; length "+toOct(len)+" next block: "+toOct(block+(int)ceil((len+16)/128)));
           Serial.println("Block:Address");
           int a=block*128+16, i=0, startaddress=0xffff;
@@ -3087,19 +3119,120 @@ void processSerial(int count)
           Serial.println("Tape "+filename+" not found");
       }
 
+#ifdef NANOESP32      
+      else if (line.startsWith("wifi SSID "))
+      { int pos1 = 10;
+        String name = line.substring(pos1, 99);
+        if (name.length()>16)
+        { Serial.println("wifi name is too long - truncated to 16 characters");
+          name = name.substring(0, 16);
+        }
+        for (int i=0; i<16; i++)
+          EEPROM.write(2+i, 0);
+        for (int i=0; i<name.length(); i++)
+          EEPROM.write(2+i, name.charAt(i));
+        EEPROM.commit();
+      }
+
+      else if (line.startsWith("wifi password "))
+      { int pos1 = 14;
+        String name = line.substring(pos1, 99);
+        if (name.length()>16)
+        { Serial.println("wifi password is too long - truncated to 16 characters");
+          name = name.substring(0, 16);
+        }
+        for (int i=0; i<16; i++)
+          EEPROM.write(18+i, 0);
+        for (int i=0; i<name.length(); i++)
+          EEPROM.write(18+i, name.charAt(i));
+        EEPROM.commit();
+      }
+
+      else if (line.startsWith("wifi forget"))
+      { for (int i=0; i<32; i++)
+          EEPROM.write(2+i, 0);
+        EEPROM.commit();
+      }
+#endif
+
+      else if (line.length()>0) {
+        Serial.println("Unknown or mistyped command ignored");
+      }
+
       Serial.print(">");
       line = "";
     }
   }
 }
 
+#ifdef NANOESP32
+
+/* ------------------------------------------------- */
+
+void telnetConnected(String ip) {
+  //TELNET_IAC_DONT_LINEMODE
+  telnets.write(255);
+  telnets.write(254);
+  telnets.write(34);  
+  
+  //TELNET_IAC_WILL_ECHO
+  telnets.write(255);
+  telnets.write(251);
+  telnets.write(1);  
+  
+  // TELNET_IAC_DONT_ECHO
+  telnets.write(255);
+  telnets.write(254);
+  telnets.write(1);  
+  
+  /*telnets.write(255);
+  telnets.write(251);
+  telnets.write(3);  
+  
+  telnets.write(255);
+  telnets.write(253);
+  telnets.write(3);  
+  */
+
+  Serial.print(ip);
+  Serial.println(" connected.");
+}
+
+void telnetDisconnected(String ip) {
+  Serial.print(ip);
+  Serial.println(" disconnected.");
+}
+
+void telnetReconnect(String ip) {
+  Serial.print(ip);
+  Serial.println(" reconnected.");
+}
+
+
+/* ------------------------------------------------- */
+
+#endif
+
 void setup() {
-  selectDisplay(0); // disabled
+  selectDisplay(7); // disabled
 #ifdef RP2040
-  Wire.setClock(1000000);
-  Wire.setTimeout(200, true);
   setupEasyNeoPixels(D11, 2);
   pinMode(D22, OUTPUT); // buzzer
+#endif
+
+#ifdef NANOESP32
+  pinMode(LED_RED, OUTPUT);
+  pinMode(LED_GREEN, OUTPUT);
+  pinMode(LED_BLUE, OUTPUT);
+  digitalWrite(LED_RED, HIGH);
+  digitalWrite(LED_GREEN, HIGH);
+  digitalWrite(LED_BLUE, HIGH);
+
+/* eeprom layout:
+ * 2-17  SSID of wifi if used
+ * 18-37 password of wifi if used
+*/
+  EEPROM.begin(512);
 #endif
 
 #ifndef RP2040
@@ -3134,6 +3267,7 @@ void setup() {
   // you MUST initialize all displays
   for (int i=0; i<5; i++)
   { selectDisplay(i);
+    //u8g2.setBusClock(1250000);
     u8g2.begin();
   }
 
@@ -3187,20 +3321,70 @@ void setup() {
 
   // TODO: memory size test
 
+#ifndef NANOESP32
   Serial.begin(115200);     // usb serial for debug output
   Serial.setTimeout(5000);
+#endif
 
-#ifndef RP2040
-  Serial1.setTX(1); // serial to nova
-  Serial1.setRX(0);
-  Serial1.begin(4800,SERIAL_8N1);
-#else
+#if defined(RP2040)
   //Serial2.setTX(D4);
   //Serial2.setRX(D3);
   //Serial2.begin(4800,SERIAL_8N1);
+#elif defined(NANOESP32)
+  //Serial1.setTX(1); // serial to nova
+  //Serial1.setRX(0);
+  //Serial1.begin(4800,SERIAL_8N1);
+#else
+  Serial1.setTX(1); // serial to nova
+  Serial1.setRX(0);
+  Serial1.begin(4800,SERIAL_8N1);
 #endif
 
   lcdclear();
+
+#ifdef NANOESP32
+/////// wifi & telnet
+  for (int i=0; i<16; i++) ssid[i]=EEPROM.read(2+i);
+  ssid[16]=0;
+  for (int i=0; i<16; i++) password[i]=EEPROM.read(18+i);
+  password[16]=0;
+  if (ssid[0]) {
+    for(int i=0; i<10; i++) 
+      u8g2log.println();
+    u8g2log.println(ssid);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    int n=1;
+    while(WiFi.status() != WL_CONNECTED) {
+      delay(100);
+      u8g2log.print(".");
+      if ((n&31)==0) 
+        u8g2log.println();
+      if (n>200) {
+        u8g2log.println("Failed to connect");
+        return;
+      }
+      n++;
+    }
+  
+    telnets.onConnect(telnetConnected);
+    telnets.onDisconnect(telnetDisconnected);
+    telnets.onReconnect(telnetReconnect);
+    etelnet.setLineMode(false);
+  
+    Serial.print("Telnet.begin: ");
+    if(telnets.begin()) {
+      Serial.println("Successful");
+    } else {
+      Serial.println("Failed");
+    }
+  
+    IPAddress ip = WiFi.localIP();
+    Serial.println();
+    u8g2log.println(ip);
+    Serial.print("Telnet Server IP: "); Serial.println(ip);
+  }
+#endif
 }
 
 short i=0;
@@ -3209,6 +3393,10 @@ int startKey=0;
 void loop(void) {
   unsigned long currentMillis = millis();
   
+#ifdef NANOESP32
+  telnets.loop();
+#endif
+
 #ifdef RP2040
   if (Serial2.available())
   { byte b = Serial2.read();
@@ -3282,28 +3470,13 @@ void loop(void) {
         continue;
       }
       else if (haltInstruction==WRITELED)
-      { 
-#ifndef TEENSY
-        //digitalWrite(6, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
-        //digitalWrite(A2, 1);
-        //digitalWrite(A3, 1);
-        //digitalWrite(A4, 1);
-        //digitalWrite(A5, 1);
-#endif
-        //digitalWrite(13, (haltA0&1)!=0);
-#ifdef TEENSY
-        //digitalWrite(12, (haltA0&2)!=0);
-        //digitalWrite(11, (haltA0&4)!=0);
-        writeColor(haltA0&15);
+      { writeColor(haltA0&15);
 #ifdef A14
         analogWrite(A14, haltA0>>4);
 #endif
-#endif
-#ifndef TEENSY
         delay(50); // must be shorter than 100 ms above!
 #ifndef RP2040
         writeColor(0);
-#endif
 #endif
         examine(haltAddress);
         continueNova();
@@ -3328,7 +3501,7 @@ void loop(void) {
       //  continueNova();
       //  continue;
      // }
-      else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
+      else if (haltInstruction==WRITEBLOCK) // write BIGENDIAN to eeprom
       { unsigned int A2=examineAC(2);
         //gpio(4);
         writeBlocktoEEPROM(haltA0, A2);
@@ -3376,6 +3549,9 @@ void loop(void) {
         SerialIO=false;
         return; // Normal halt: nova ready for input
       }
+#ifdef NANOESP32
+      telnets.loop();
+#endif
     }
 
     if (SerialIO==false && opmode!=5) break;
@@ -3396,6 +3572,9 @@ void loop(void) {
     while (readKeys()) {
       if ((count=Serial.available()))
       { processSerial(count);
+#ifdef NANOESP32
+        telnets.loop();
+#endif
         if (SerialIO) return;
       }
       if (millis()-k>100 && millis()-startKey>1000) return;
