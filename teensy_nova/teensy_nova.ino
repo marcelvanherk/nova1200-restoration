@@ -90,6 +90,7 @@ Marcel van Herk, 21 January 2024   - Added wifi commands, PICOW define, rudiment
 Marcel van Herk, 23 January 2024   - Also PICO uses fast TFT_eSPI for ILI9341; detect out of memory
                                    - on PICOW MEMSIZE 32768 does not work - cannot store sessions
                                    - session auto|manual command; Note: coded sessions assume 32768 memory size
+Marcel van Herk, 11 February 2024  - Added PICOW telnet access, simplified WIFI code using MergeStreams
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -98,21 +99,12 @@ Marcel van Herk, 23 January 2024   - Also PICO uses fast TFT_eSPI for ILI9341; d
 // select breadboard type or Featherwing TFT board (define none or one)
 //#define FEATHERWING_TFT_TOUCH
 //#define LAZY_BREADBOARDTFT
-#define LAZY_BREADBOARDBTN
-#define PICO
+//#define LAZY_BREADBOARDBTN
+//#define PICO
 //#define PICOWS
-//#define PICOD2
+#define PICOD2
 
 #define PICOW  // has built-in wifi; but uses more memory even if wifi not used - need to reduce MEMSIZE to 16384
-#ifdef PICOW
-#include <WiFi.h>
-char ssid[18];
-char password[18];
-int port = 4242;
-WiFiServer server(port);
-WiFiClient client;
-#define WIFI client
-#endif
 
 #include "SPI.h"
 #if defined(PICOD2)
@@ -384,6 +376,18 @@ WiFiClient client;
 #  define BUTTON8 0
 #endif
 
+#ifdef PICOW
+#include "TelnetStream.h"
+#include <MergedStreams.h>
+TelnetStream telnets;
+MergedStreams mergedStreams(Serial, telnets);
+#define Serial mergedStreams
+
+#elif defined(WIFI)
+MergedStreams mergedStreams(Serial, WIFI);
+#define Serial mergedStreams
+#endif
+
 #include "EEPROM.h"
 /* layout:
  * 0-1   state of NOVA switches
@@ -444,7 +448,6 @@ WiFiClient client;
 #endif
 
 bool hasSD = false;
-bool hasWIFI = false;
 
 PS2Keyboard ps2kb;
 
@@ -1247,9 +1250,6 @@ void Serialwrite(int a)
   }
 
   Serial.write(a);
-#ifdef WIFI
-  if (hasWIFI) WIFI.write(a);
-#endif
 
   if (inCursor && a>='0' && a<='9') // collect graphics terminal number
   { val=10*val+a-'0';
@@ -1922,78 +1922,6 @@ void serialDebug(int mode) {
   }
   examine(pc);
 }
-
-// mini debugger display on serial interface
-#ifdef WIFI
-void WIFIDebug(int mode) {
-  unsigned int pc = NovaPC;
-  unsigned int carry = NovaC!=0;
-  unsigned int in = NovaMem[NovaPC], a0, a1, a2=0, a3=0;
-  a0=examineAC(0);
-  a1=examineAC(1);
-  a2=examineAC(2);
-  a3=examineAC(3);
-  if (mode&1)
-  { WIFI.print("ac0:");
-    WIFI.print(toOct(a0));
-    WIFI.print(" 1:");
-    WIFI.print(toOct(a1));
-    WIFI.print(" 2:");
-    WIFI.print(toOct(a2));
-    WIFI.print(" 3:");
-    WIFI.print(toOct(a3));
-    WIFI.print(" ");
-
-    if (carry)
-      WIFI.println("C");
-    else
-      WIFI.println(".");
-  }
-
-  if (mode&2)
-  { in = examine(pc);
-    WIFI.print(toOct(pc));    // print address
-    WIFI.print(printDisas(in, OCT));    // disassemble instruction
-  
-    int mref = (in>>11)&0x1f;
-    int b=(in&0x700)>>8;
-    int dest=in&0xff;
-    bool target=false;
-    int indirect=0;
-    unsigned int t=0;
-  
-    if      (mref<=1)        { target = true; } // jmp, jms
-    else if (mref<=3)        { target = true; indirect=1; } // isz, dsz
-    else if ((mref&0x1c)==4) { target = true; indirect=1; } // lda
-    else if ((mref&0x1c)==8) { target = true; } // sta
-  
-    if (target)
-    { switch(b)
-      { case 1: case 5: if (dest&0x80) t = pc-(128-(dest&127)); else t=pc+dest; break;
-        case 2: case 6: if (dest&0x80) t = a2-(128-(dest&127)); else t=a2+dest; break;
-        case 3: case 7: if (dest&0x80) t = a3-(128-(dest&127)); else t=a3+dest; break;
-        case 0: case 4: t=dest; break;     
-      }
-  
-      if (b>3) indirect++;
-      WIFI.print(" ");
-      if (b>3) WIFI.print("@");
-      if (b>0) WIFI.print(toOct(t));
-  
-      for (int i=0; i<indirect; i++)
-      { if (b>3) do t=examine(t); while (t&0x8000);
-        else t=examine(t);
-      }
-           
-      if (indirect)
-      { WIFI.print("->");
-        WIFI.print(toOct(t));
-      }
-    }
-  }
-  examine(pc);
-}
-#endif
 
 // Array with contents of punched tape; there is space for several tapes
 #include "novabasic1.tape.h"
@@ -2975,6 +2903,9 @@ String history[NHISTORY];
 int nhist=0;
 bool kmode=false;
 int kaddress=0;
+char ssid[18];
+char password[18];
+bool innewline=false;
 
 // support to inject 'serial' data from code or buttons
 String injectSerialText="";
@@ -2983,43 +2914,7 @@ int injectSerialDelay=0;
 byte Serialread()
 { if (Serial.available())
     return Serial.read();
-  
-#ifdef WIFI
-  if (WIFI && WIFI.available())
-  { hasWIFI = true;
-    byte b = WIFI.read();
-//Serial.print('#');
-//Serial.println(b);
-//delay(50);
-
-    if (b==255)
-    { while(!WIFI.available());
-      int c=WIFI.read();
-      while(!WIFI.available());
-      int v=WIFI.read();
-
-      if (c==253) c=252;
-      else if (c==251) c=254;
-
-      WIFI.write(255);
-      WIFI.write(c);
-      WIFI.write(v);
-//Serial.println(c);
-//Serial.println(v);
-      while(!WIFI.available());
-      b = WIFI.read();
-//Serial.println(v);
-      return b;
-    }
-    else if (b==13)
-    { while(!WIFI.available());
-      WIFI.read();
-    }
-    else
-      return b;
-  }
-#endif
-  
+ 
   if (injectSerialText.length())
   { byte b = injectSerialText.charAt(0);
     injectSerialText.remove(0, 1);
@@ -3065,11 +2960,10 @@ void about(void)
   Serial.println("** Press button or key to continue **");
   keySel=-99;
   updateImage();
+  delay(50);
+  while(Serial.available()) Serial.read();
   while(!getButtonPress(true) && !Serial.available() && !ps2kb.available());
   if (Serial.available()) Serial.read();
-#ifdef WIFI
-  if (WIFI.available()) WIFI.read();
-#endif
   if (ps2kb.available()) ps2kb.read();
   restoreText(true);
 }
@@ -3200,14 +3094,18 @@ void processSerial(int count)
         Serial.write(8);
       }
     }
-    else if (b != '\r' && b != '\n') 
+    else if (b != '\r' && b != '\n' && b != 0)
     { line.concat(char(b)); 
       Serial.write(b);
+      innewline=false;
     }
 
     // enter
-    if (b == '\r') 
-    { // auto suggest next command
+    if (b == '\r' || b == '\n' || b == 0)
+    { if (innewline && b!='\r') return;
+
+      // auto suggest next command
+      innewline=true;
       if (line=="" && nextcmd!="")
       { line=nextcmd;
         Serial.write("\33[2K\r");
@@ -3356,7 +3254,7 @@ void processSerial(int count)
         unsigned short a = readOct(line, pos1);
         if (pos2>=0) {
           String t=line.substring(pos2);
-	  t.toLowerCase();
+          t.toLowerCase();
 
           // shortcuts to frequent routines, must be in memory to work
           if      (t==" .mul"   ) deposit(a, 0x043e); // JMS @3e etc
@@ -3934,838 +3832,52 @@ void processSerial(int count)
   }
 }
 
-// process wifi data to pass to Nova or for monitor
-#ifdef WIFI
-void processWifi(int count)
-{ int av = WIFI.available();
-  byte b = WIFI.read();
-  char m[50];
-  int pc;
-  int a;
+#ifdef PICOW
 
-//Serial.print('#');
-//Serial.println(b);
-//delay(50);
+/* ------------------------------------------------- */
 
-  if (b==255)
-  { while(!WIFI.available());
-    int c=WIFI.read();
-    while(!WIFI.available());
-    int v=WIFI.read();
-
-    if (c==253) c=252;
-    else if (c==251) c=254;
-
-    WIFI.write(255);
-    WIFI.write(c);
-    WIFI.write(v);
-//Serial.println(c);
-//Serial.println(v);
-
-    while(!WIFI.available());
-    b = WIFI.read();
-//Serial.println(b);
-  }
-  else if (b==13)
-  { while(!WIFI.available());
-    WIFI.read();
-  }
-
-  // power ON if not
-  if (novaKey==1)
-  { processButton(49);
-    return;
-  }
+void telnetConnected(String ip) {
+  //TELNET_IAC_DONT_LINEMODE
+  telnets.write(255);
+  telnets.write(254);
+  telnets.write(34);  
   
-  if (b==PS2_F1)
-  { processButton(49); // on-off
-    return;
-  }
-  else if (b==PS2_F2)
-  { processButton(19); // restore
-    return;
-  }
-  else if (b==PS2_F3)
-  { processButton(20); // store
-    return;
-  }
-  else if (b==PS2_F4)
-  { processButton(23); // speed
-    return;
-  }
-  else if (b==PS2_F5) 
-  { about();           // about
-    return;
-  }
-  else if (b==PS2_F6)
-  { processButton(25); // cls
-    return;
-  }
-  else if (b==PS2_F7)
-  { processButton(10); // stop
-    return;
-  }
-  else if ( b==PS2_F8)
-  { processButton(17); // step
-    return;
-  }
-  else if (b==PS2_F9)
-  { processButton(12); // continue
-    return;
-  }
-  else if (b==PS2_F10)
-  { processButton(24); // menu
-    return;
-  }
-  else if (b==PS2_F12)
-  { processButton(26); // help
-    return;
-  }
-
-  if (SerialIO) 
-  { if (b==3)
-    { SerialIO=false;
-      stopNova();
-      WIFI.println("ctrl-C");
-      WIFI.print(">");
-      return;
-    }
-    else
-    { if (DEV_IS_DONE(INT_TTI)) 
-     { if (av) injectSerial(b); // avoid it getting lost
-        return;
-     }
-      
-      //if (DEV_IS_BUSY(INT_TTI))
-      { ttibuf= b;
-        DEV_CLR_BUSY( INT_TTI ) ;
-        DEV_SET_DONE( INT_TTI ) ;
-        DEV_UPDATE_INTR ;
-        return;
-      }
-    }
-    return;
-  }
-
-  // ctrl-C
-  if (b==3)
-  { SerialIO=false;
-    stopNova();
-    WIFI.println("ctrl-C");
-    WIFI.print(">");
-    return;
-  }
-
-  // new interactive mode
-  else 
-  { if (b==27) // read escape key sequences (up and down)
-    { int k = WIFI.read();
-      if (k=='[')
-      { k = WIFI.read();
-        if (k=='A')
-        { nhist--;
-          if (nhist<0) nhist=0;
-          line = history[nhist];
-          WIFI.write("\33[2K\r");
-          WIFI.print(">");
-          WIFI.print(line);
-        }
-        else if (k=='B')
-        { nhist++;
-          if (nhist>=NHISTORY) nhist=NHISTORY-1;
-          line = history[nhist];
-          WIFI.write("\33[2K\r");
-          WIFI.print(">");
-          WIFI.print(line);
-        }
-      }
-      else WIFI.write(k);
-    }
-    else if (b==127 || b==8) // backspace
-    { if (line.length()>0) 
-      { line.remove(line.length()-1);
-        WIFI.write(8);
-        WIFI.write(32);
-        WIFI.write(8);
-      }
-    }
-    else if (b != '\r' && b != '\n') 
-    { line.concat(char(b)); 
-      WIFI.write(b);
-    }
-
-    // enter
-    if (b == '\r') 
-    { // auto suggest next command
-      if (line=="" && nextcmd!="")
-      { line=nextcmd;
-        WIFI.write("\33[2K\r");
-        WIFI.print(">");
-        WIFI.print(line);
-        nextcmd="";
-        return;
-      }
+  //TELNET_IAC_WILL_ECHO
+  telnets.write(255);
+  telnets.write(251);
+  telnets.write(1);  
   
-      WIFI.println();
+  // TELNET_IAC_DONT_ECHO
+  telnets.write(255);
+  telnets.write(254);
+  telnets.write(1);  
+  
+  /*telnets.write(255);
+  telnets.write(251);
+  telnets.write(3);  
+  
+  telnets.write(255);
+  telnets.write(253);
+  telnets.write(3);  
+  */
 
-      // search place to store history and store it
-      nhist=-1;
-      for (int i=0; i<NHISTORY; i++)
-      { if (history[i]=="") 
-        { history[i]=line;
-          nhist=i+1;
-          break;
-        }
-      }
-      if (nhist==-1)
-      { for (int i=1; i<NHISTORY; i++) 
-        { history[i-1]=history[i];
-        }
-        nhist=NHISTORY-1;
-        history[nhist++]=line;
-      }
-
-      // stop Nova when running
-      pc=NovaPC&0x7fff;
-          
-      if (line.startsWith("autostart"))
-      { line = nextcmd;
-        if(getSessionName(rootID)==".BASICSESSION")
-        injectSerial("\x1b");
-      }
-
-      // show help text
-      if (line.startsWith("help"))
-      { WIFI.println(helpstring);
-      }
-
-      // Nova virtual console deposit (Kaddress/data)
-      else if (line.startsWith("K"))
-      { int pos1 = 1;
-        int pos2 = line.indexOf('/', 0);
-        if (pos2<0)
-        { kmode=false;
-        }
-        else
-        { int a = readOct(line, pos1);
-          int b = readOct(line, pos2+1);
-          deposit(a, b);
-          kmode=true;
-          kaddress=a+1;
-        }
-      }
-      else if (kmode && line[0]>'0' && line[0]<='7')
-      { int b=readOct(line, 0);
-        deposit(kaddress, b);
-        kaddress++;
-      }
-
-      // disassemble
-      else if (line.startsWith("list "))
-      { int pos1 = 5;
-        int pos2 = line.indexOf(' ', 6);
-        unsigned short a = readOct(line, pos1);
-        int b = pos2<0 ? 16 : readOct(line, pos2+1);
-        for (unsigned short i=0; i<b; i++)
-        { WIFI.print(toOct(a));
-          unsigned short v=examine(a++);
-          WIFI.print(" ");
-          WIFI.print(toOct(v));
-          WIFI.println(printDisas(v, OCT));
-        }
-        nextcmd = "list "+toOct(a)+" "+toOct(b);
-        examine(pc);
-      }
-        
-      // dump memory
-      else if (line.startsWith("dump "))
-      { int pos1 = 5;
-        int pos2 = line.indexOf(' ', 6);
-        unsigned short a = readOct(line, pos1);
-        int b = pos2<0 ? 16 : readOct(line, pos2+1);
-        for (unsigned short i=0; i<b; i++)
-        { WIFI.print(toOct(a));
-          unsigned short v=examine(a++);
-          WIFI.print(" ");
-          WIFI.print(toOct(v));
-          WIFI.print(" ");
-          WIFI.print(char(max(v>>8,32)));
-          WIFI.print(char(max(v&255,32)));
-          WIFI.println("");
-        }
-        nextcmd = "dump "+toOct(a)+" "+toOct(b);
-        examine(pc);
-      }
-
-      // read or set accumulator
-      else if (line.startsWith("ac"))
-      { int pos1 = 2;
-        int pos2 = line.indexOf(' ', 3);
-        unsigned short a = readOct(line, pos1);
-        if (pos2>=0) depositAC(a, readOct(line, pos2+1));
-        WIFI.println("ac"+String(a)+" = "+toOct(examineAC(a)));
-        if (pos2>=0) nextcmd = "ac"+String((a+1)%4)+" "+toOct(readOct(line, pos2+1));
-        else nextcmd = "ac"+String((a+1)%4);
-      }
-
-      // read or set pc
-      else if (line.startsWith("pc"))
-      { int pos2 = line.indexOf(' ', 2);
-        if (pos2>=0) examine(readOct(line, pos2+1));
-        NovaPC = readOct(line, pos2+1);
-        WIFI.println("pc = "+toOct(NovaPC&0x7fff));
-        nextcmd = "step";
-      }
-
-      // show all registers
-      else if (line.startsWith("reg"))
-      { for (int a=0; a<4; a++)
-          WIFI.println("ac"+String(a)+" = "+toOct(examineAC(a)));
-        WIFI.println("pc = "+toOct(NovaPC&0x7fff));
-        WIFI.println("carry = "+String(NovaC!=0));
-        // WIFI.println("intrq = "+String(int_req, OCT));
-      }
-
-      // read or set memory location
-      else if (line.startsWith("mem "))
-      { int pos1 = 4;
-        int pos2 = line.indexOf(' ', 5);
-        unsigned short a = readOct(line, pos1);
-        if (pos2>=0) deposit(a, readOct(line, pos2+1));
-        WIFI.println("mem "+toOct(a)+" = "+toOct(examine(a)));
-        examine(pc);
-        if (pos2>=0) nextcmd = "mem "+toOct(a+1)+" "+toOct(readOct(line, pos2+1));
-        else nextcmd = "mem "+toOct(a+1);
-      }
-
-      // assemble instruction
-      else if (line.startsWith("asm "))
-      { int pos1 = 4;
-        int pos2 = line.indexOf(' ', 5);
-        unsigned short a = readOct(line, pos1);
-        if (pos2>=0) {
-          String t=line.substring(pos2);
-          t.toLowerCase();
-
-          // shortcuts to frequent routines, must be in memory to work
-          if      (t==" .mul"   ) deposit(a, 0x043e); // JMS @3e etc
-          else if (t==" .div"   ) deposit(a, 0x043f);
-          else if (t==" .sys"   ) deposit(a, 0x0440);
-          else if (t==" .memclr") deposit(a, 0x045b);
-          else if (t==" .memcpy") deposit(a, 0x045c);
-          else if (t.startsWith(" .db "))     // .db num or .db "string"
-          { int pos3 = t.indexOf('"');
-            if (pos3>0)
-            { int pos4=t.indexOf('"',pos3+1);
-              t = t.substring(pos3+1, pos4);
-              int j=t.length()+1;
-              if (j&1) j++;
-              for (int i=0; i<j; i+=2, a++)
-                deposit(a, ((t[i]<<8)+t[i+1]));
-              a--;
-            }
-            else
-            { pos3 = t.indexOf(' ', 4);
-              unsigned short b = readOct(t, pos3+1);
-              deposit(a, b);
-            }
-          }
-
-          else for(int b=0; b<=65535;)
-          { String s = printDisas(b, OCT);
-            s.toLowerCase();
-            if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
-              b+=63; 
-            // must be different instruction (all coded in high 10 bits)
-            else if (s.equals(t))
-            { deposit(a, b);
-              break;
-            }
-            else 
-              b++;
-          }
-          nextcmd = "asm "+toOct(a+1)+" ";
-        }
-        WIFI.print(toOct(a));
-        unsigned short v=examine(a++);
-        WIFI.print(" ");
-        WIFI.print(toOct(v));
-        WIFI.println(printDisas(v, OCT));
-        examine(pc);
-      }
-
-      // run without serial IO
-      else if (line.startsWith("go "))
-      { int pos1 = 3;
-        unsigned short a = readOct(line, pos1);
-        WIFI.println("running");
-        SerialIO=true;
-        startNova(a);
-        nextcmd = "stop";
-      }
-
-      // run with serial IO
-      else if (line.startsWith("run "))
-      { int pos1 = 4;
-        SerialIO=true;
-        unsigned short a = readOct(line, pos1);
-        WIFI.println("running, use ctrl-c to return to command mode");
-        startNova(a);
-        nextcmd = "stop";
-      }
-
-      else if (line.startsWith("reset"))
-      { resetNova();
-        stopNova(); 
-        if(SerialIO) 
-        { WIFI.println("interactive mode");
-          SerialIO=false; 
-        }  
-        nextcmd = "";
-      }
-
-      else if (line.startsWith("poweroff"))
-      { resetNova();
-        stopNova(); 
-        WIFI.println("power off");
-        SerialIO=false; 
-        novaKey=1;
-        nextcmd = "";
-      }
-
-      else if (line.startsWith("stop"))
-      { stopNova(); 
-        if(SerialIO) 
-        { WIFI.println("stopped");
-          SerialIO=false; 
-        }  
-        nextcmd = "continue";
-      }
-
-      else if (line.startsWith("continue"))
-      { continueNova();
-        SerialIO=true; 
-        nextcmd = "stop";
-      }
-
-      else if (line.startsWith("init")) {
-        setup();
-        delay(100);
-        nextcmd = "";
-      }
-
-      else if (line.startsWith("version")) {
-        WIFI.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
-        WIFI.println();
-        WIFI.println("Data General Nova - 1st 16 bit minicomputer in 1969");
-        WIFI.println("This circuit simulates a 1970 DG Nova 1200 machine,");
-        WIFI.println("equipped with 1 serial board and 4 8 KW core boards.");
-        WIFI.println("It runs the original 1970 DG BASIC software. You");
-        WIFI.println("can load and modify different 'sessions' to demo.");
-        WIFI.println();
-        WIFI.println("Note: the graphics terminal is an anachronism ;->>>");
-        WIFI.println();
-        WIFI.println("Contains parts of simhv3-9");
-        WIFI.println("Copyright (c) 1993-2008, Robert M. Supnik");
-        WIFI.println();
-        WIFI.println("Contains image from FrontPanel 2.0");
-        WIFI.println("Copyright (c) 2007-2008, John Kichury");
-        nextcmd = "";
-      }
-
-      else if (line.startsWith("about")) {
-        about();
-        nextcmd = "";
-      }
-
-      // load memory from eeprom
-      else if (line.startsWith("load "))
-      { int pos1 = 5;
-        int pos2 = line.indexOf(' ', 6);
-        int pos3 = line.indexOf(' ', pos2+1);
-        if (pos2>=0 && pos3>=0)
-        { unsigned short a = readOct(line, pos1);
-          //unsigned short b = readOct(line, pos2+1);
-          //unsigned short c = readOct(line, pos3+1);
-          //
-          //Serial.println("loaded memory "+toOct(s)+ " with " + c + " blocks");
-          nextcmd = "run "+toOct(a);
-        }
-        else
-          nextcmd = "";
-        examine(pc);
-      }
-
-      // save memory to eeprom
-      else if (line.startsWith("save "))
-      { //int pos1 = 5;
-        //int pos2 = line.indexOf(' ', 6);
-        //int pos3 = line.indexOf(' ', pos2+1);
-        //if (pos2>=0 && pos3>=0)
-        //{ //unsigned short a = readOct(line, pos1);
-          //unsigned short b = readOct(line, pos2+1);
-          //unsigned short c = readOct(line, pos3+1);
-          //unsigned short s=a;
-          //
-          //Serial.println("saved memory "+toOct(s)+ " total of " + c + " blocks");
-        //}
-        nextcmd = "";
-        examine(pc);
-      }
-
-      // restore memory from eeprom
-      else if (line.startsWith("restore"))
-      { if (hasSD) restoreSession(".SD");
-        else restoreSession(".EEPROM");
-      }
-
-      // store memory to eeprom
-      else if (line.startsWith("store")) 
-      { storeSession();
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
-        EEPROM.commit(); 
-#endif
-     }
-
-      // debug step
-      else if (line.startsWith("step"))
-      { int pos2 = line.indexOf(' ', 4);
-        unsigned short a = pos2>0 ? readOct(line, pos2+1) : 1;
-        for (int i=0; i<a; i++) {
-          WIFIDebug(1);
-          WIFIDebug(2); 
-          WIFI.println();
-          stepNova();
-        }
-        nextcmd = "step "+toOct(a);
-      }
-
-      // print lights status
-      else if (line.startsWith("lights")) {
-        WIFI.println("Data="+toOct(novaData)); 
-        WIFI.println("Addr="+toOct(novaAddress)); 
-        WIFI.println("Status="+toOct(novaLights));
-        nextcmd = "lights";
-      }
-
-      // run test function (may not return)
-      else if (line.startsWith("test "))
-      { //int pos1 = 5;
-        //unsigned short a = readOct(line, pos1);
-        //tests(a);
-      }
-
-      // set line of LCD
-      else if (line.startsWith("lcd "))
-      { int pos1 = 4;
-        int pos2 = line.indexOf(' ', pos1+1);
-        if (pos2>=0)
-        { unsigned short a = readOct(line, pos1);
-          //display(a, line.substring(pos2+1));
-          nextcmd = "lcd "+String((a+1)%5)+" "+line.substring(pos2+1);
-        }
-      }
-
-      // program leds
-      else if (line.startsWith("led "))
-      { int pos1 = 4;
-        unsigned short a = readOct(line, pos1);
-        //gpio(a & 255);
-
-#if defined(PICOD2)
-        digitalWrite(LED_RED, !(a&1));
-        digitalWrite(LED_GREEN, !((a>>1)&1));
-        digitalWrite(LED_BLUE, !((a>>2)&1));
-#endif
-
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) 
-        pinMode(25, OUTPUT);
-        digitalWrite(25, (a>>8)&1);
-#elif !defined(PICOD2)
-        digitalWrite(13, (a>>8)&1);
-#endif
-        //digitalWrite(12, (a>>9)&1);
-        //digitalWrite(11, (a>>10)&1);
-        //writeColor(a&15);
-        nextcmd = "led "+toOct(a+1);
-      }
-          
-      // program DAC
-      else if (line.startsWith("dac "))
-      { int pos1 = 4;
-        unsigned short a = readOct(line, pos1);
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
-#ifdef A14
-        analogWrite(A14, a);
-#endif
-#endif
-        nextcmd = "dac "+toOct(a+1);
-      }
-
-      // read switches bank
-      else if (line.startsWith("reads"))
-      { WIFI.println("Switches="+toOct(novaSwitches)); 
-        nextcmd = "reads";
-      }
-
-      // read key
-      else if (line.startsWith("readk"))
-      { //Serial.println("Key="+toOct(readKeys())); 
-        nextcmd = "readk";
-      }
-
-      // write data bus (for unconnected nova)
-      else if (line.startsWith("writed "))
-      { int pos1 = 7;
-        unsigned short a = readOct(line, pos1);
-        novaData = a;
-        nextcmd = "writed "+toOct(a+1);
-      }
-
-      // write address bus (for unconnected nova)
-      else if (line.startsWith("writea "))
-      { int pos1 = 7;
-        unsigned short a = readOct(line, pos1);
-        novaAddress = a;
-        nextcmd = "writea "+toOct(a+1);
-      }
-
-      // write lights (for unconnected nova)
-      else if (line.startsWith("writel "))
-      { int pos1 = 7;
-        unsigned short a = readOct(line, pos1);
-        novaLights = a;
-        nextcmd = "writel "+toOct(a+1);
-      }
-
-      // read ADC
-      else if (line.startsWith("adc"))
-      { 
-        int pos1 = 4;
-        int pins[8] = {A0, A1, A2, A3, A4, A5, A6, A7};
-        int pin=readOct(line, pos1);
-        pinMode(pins[pin&7], INPUT);
-        WIFI.println("adc"+String(pin)+"="+toOct(analogRead(pins[pin&7])));
-        nextcmd = "adc";
-      }
-
-      // list eeprom block in hex
-      else if (line.startsWith("eeprom "))
-      { int pos1 = 7;
-        unsigned short a = readOct(line, pos1);
-        //
-        nextcmd = "eeprom "+toOct(a+1);
-      }
-
-      // list memory block in hex
-      else if (line.startsWith("memory "))
-      { int pos1 = 7;
-        unsigned short a = readOct(line, pos1);
-        for (short i=0; i<64; i++)
-        { String s;
-          s = toHex(examine(a+i));
-          if ((i&7)==7) WIFI.println(s); else WIFI.print(s);
-        }
-        nextcmd = "memory "+toOct(a+64);
-      }
-
-      // clear block of memory
-      else if (line.startsWith("clear "))
-      { int pos1 = 6;
-        int pos2 = line.indexOf(' ', 7);
-        int pos3 = line.indexOf(' ', pos2+1);
-        if (pos2>=0)
-        { unsigned short a = readOct(line, pos1);
-          unsigned short b = readOct(line, pos2+1);
-          unsigned short c = pos3<0 ? 0 : readOct(line, pos3+1);
-          unsigned short s=a;
-          for (int i=0; i<b; i++)
-            deposit(s+i, c);
-          WIFI.println("cleared memory "+toOct(s)+ " " + toOct(b) + " words to " + toOct(c));
-          nextcmd = "dump "+toOct(a);
-        }
-        else
-          nextcmd = "";
-        examine(pc);
-      }
-
-      // load hex data to memory
-      else if (line.startsWith(":"))
-      { line.toCharArray(m, 50);
-        unsigned short n = readHex(m+1,2);
-        unsigned short a=readHex(m+3,4);
-        if (n<=10) for (unsigned short i=0; i<n; i++) deposit(a++, readHex(m+7+i*4,4));
-        nextcmd = "";
-      }
-
-      // load hex data (16 bytes) to eeprom
-      else if (line.startsWith(";"))
-      { //line.toCharArray(m, 50);
-        //unsigned short n = readHex(m+1,1);
-        //unsigned short a=readHex(m+2,4);
-        //
-        nextcmd = "";
-      }
-
-      else if (line.startsWith("?"))
-      { WIFI.print(toHex(novaAddress)); 
-        WIFI.print(toHex(novaData)); 
-        WIFI.println(toHex2(novaLights));
-        nextcmd = "?";
-      }
-
-      // dump all registers in hex
-      else if (line.startsWith("$"))
-      { for (int a=0; a<4; a++)
-          WIFI.print(toHex(examineAC(a)));
-        WIFI.println(toHex(novaAddress));
-        nextcmd = "";
-      }
-
-      // visualize memory as gray scale a=address b=length of visualization (default 1600 = 20 lines)
-      else if (line.startsWith("vis "))
-      { int pos1 = 4;
-        int pos2 = line.indexOf(' ', 5);
-        unsigned short a = readOct(line, pos1);
-        int b = pos2<0 ? 1600 : readOct(line, pos2+1);
-        for (unsigned short i=0; i<b; i++)
-        { unsigned short v=examine(a++);
-          char visual[]=" .:-=+*#%@";
-          short w = v/2048;
-          if (v>=32768) WIFI.print("-");
-          else if (w>=(int)strlen(visual)) WIFI.print("+");
-          else WIFI.write(visual[w]);
-          if (i%80==79) WIFI.println("");
-        }
-        nextcmd = "vis "+toOct(a)+" "+toOct(b);
-        examine(pc);
-      }
-
-      // plot memory a=address b=value range (applied positive and negative)
-      else if (line.startsWith("plot "))
-      { int pos1 = 5;
-        int pos2 = line.indexOf(' ', 6);
-        unsigned short a = readOct(line, pos1);
-        int b = pos2<0 ? 32767 : readOct(line, pos2+1);
-        short vals[80];
-        for (unsigned short i=0; i<80; i++) 
-          vals[i] = examine(a++);
-        for (short i=10; i>=-10; i--)
-        { for (unsigned short j=0; j<80; j++)
-          {  short v = (10*(int)vals[j] + b/2)/b;
-             if (v==i) WIFI.print("*");
-             else if (i==0) WIFI.print("-");
-             else WIFI.print(" ");
-           }
-          WIFI.println("");
-        }
-        nextcmd = "plot "+toOct(a)+" "+toOct(b);
-        examine(pc);
-      }
-
-      // write serial character
-      else if (line.startsWith("serw "))
-      { int pos1 = 5;
-        unsigned short a = readOct(line, pos1);
-        Serial1.write(a);
-        nextcmd = "serw "+toOct(a+1);
-      }
-
-      // set front panel switches
-      else if (line.startsWith("fp "))
-      { int pos1 = 3;
-        unsigned short a = readOct(line, pos1);
-        novaSwitches=a;
-      }
-
-      // absolute tape loader using data in eeprom; tape data is stored after 16 bytes $$llFILENAME@; where ll is its 16 bits length
-      else if (line.startsWith("tape "))
-      { int pos1 = 5;
-        String filename = line.substring(pos1, 99);
-        filename.toUpperCase(); // +"@";
-
-        // absolute tape loader using program data
-        if (filename==".BASIC")
-        { nextcmd=tapeloader(basictape, sizeof(basictape), ".basic");
-          WIFI.print(">");
-          line = "";
-          return;
-        }
-        if (filename==".SOS_XBASIC")
-        { nextcmd=tapeloader(sos_xbasictape, sizeof(sos_xbasictape), ".sos_xbasic");
-          WIFI.print(">");
-          line = "";
-          return;
-        }
-        if (filename=="LIST")
-        { WIFI.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
-          WIFI.println(".SOS_XBASIC in code memory; length "+toOct(sizeof(sos_xbasictape)));
-        }
-        else if(filename!="LIST")
-          WIFI.println("Tape "+filename+" not found");
-      }
-
-      /*else if (line.startsWith("unloaddiff "))
-      { int pos1=11;
-        String filename = line.substring(pos1, 99);
-        filename.toUpperCase();
-        unloadDiffCode(filename);
-      }
-
-      else if (line.startsWith("unload"))
-      { unload((unsigned short *) NULL, 0, 0);
-      }
-      */
-      
-      else if (line.startsWith("cleareepromsession")) // undocumented
-      { EEPROM.write(38, 0);
-        EEPROM.write(39, 0);
-        EEPROM.write(40, 0);
-        EEPROM.write(56, 0);
-        EEPROM.write(57, 0);
-        EEPROM.write(58, 0);
-        EEPROM.write(59, 0);
-        WIFI.println("Erased EEPROM session; will not load anymore");
-      }
-
-      else if (line.startsWith("session "))
-      { int pos1 = 8;
-        String filename = line.substring(pos1, 99);
-        filename.toUpperCase();
-                
-        if (filename=="LIST")
-        { for (int i=1; i<100; i++)
-          { String name=getSessionName(-i);
-            int len= getSessionLength(getSessionID(name));
-            if (name!="" && len>0)
-            WIFI.println(name+" ; length "+String(len)+
-                           "; id: "+String(getSessionID(name))+
-                            "; based on: "+getSessionName(getSessionBase(getSessionID(name))));
-          }
-        }
-        else
-        { int id=getSessionID(filename);
-          if (id>0) restoreSession(filename);
-          else WIFI.println("Session "+filename+" not found");
-          nextcmd = "run 2";
-        }
-      }
-
-      else if (line.startsWith("speed "))
-      { int pos1 = 6;
-        unsigned short a = readOct(line, pos1);
-        SIMINTERVAL=a;
-        nextcmd="";
-      }       
-
-      else if (line.length()>0)
-        WIFI.println("Unknown or mistyped command ignored");
-
-      WIFI.print(">");
-      line = "";
-    }
-  }
+  Serial.print(ip);
+  Serial.println(" connected.");
 }
+
+void telnetDisconnected(String ip) {
+  Serial.print(ip);
+  Serial.println(" disconnected.");
+}
+
+void telnetReconnect(String ip) {
+  Serial.print(ip);
+  Serial.println(" reconnected.");
+}
+
+
+/* ------------------------------------------------- */
+
 #endif
 
 void setup() {
@@ -4919,7 +4031,9 @@ delay(100);
 #endif
   tft.fillScreen(ILI9341_BLACK);
 
+#ifndef PICOW
   Serial.begin(115200);
+#endif
 
 #if defined(WIFI) && !defined(PICOW)
   WIFI.begin(115200);
@@ -4941,29 +4055,47 @@ delay(100);
 #endif
 
 #ifdef PICOW
+/////// wifi & telnet
   for (int i=0; i<16; i++) ssid[i]=EEPROM.read(2+i);
   ssid[16]=0;
   for (int i=0; i<16; i++) password[i]=EEPROM.read(18+i);
   password[16]=0;
-  if (ssid[0]==0) return;
-
-  WiFi.mode(WIFI_STA);
-  WiFi.setHostname("PicoNova");
-  Serial.printf("Connecting to '%s' with '%s'\n\r", ssid, password);
-  WiFi.begin(ssid, password);
-  int count=0;
-  while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(".");
-    delay(100);
-    if (++count>150) return;
+  if (ssid[0]) {
+    tft.setCursor(0,0);
+    for(int i=0; i<10; i++) 
+      Serial.println();
+    Serial.println(ssid);
+    tft.println(ssid);
+    WiFi.mode(WIFI_STA);
+    WiFi.begin(ssid, password);
+    int n=1;
+    while(WiFi.status() != WL_CONNECTED) {
+      delay(100);
+      Serial.print(".");
+      if ((n&31)==0) 
+        Serial.println();
+      if (n>200) {
+        Serial.println("Failed to connect");
+        tft.println("Failed to connect");
+        return;
+      }
+      n++;
+    }
+  
+    telnets.onConnect(telnetConnected);
+    telnets.onDisconnect(telnetDisconnected);
+    telnets.onReconnect(telnetReconnect);
+    // telnets.setLineMode(false);
+  
+    if(!telnets.begin()) {
+      Serial.println("Telnet failed");
+    }
+  
+    IPAddress ip = WiFi.localIP();
+    Serial.println();
+    tft.println(ip);
+    Serial.print("Telnet Server IP: "); Serial.println(ip);
   }
-  Serial.printf("\n\rConnected to WiFi, server at %s:%d\n\r", WiFi.localIP().toString().c_str(), port);
-  server.begin();
-  tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
-  tft.setTextSize(2);
-  tft.setCursor(0,0);
-  tft.print(WiFi.localIP().toString().c_str());
-  tft.println(":4242");
 #endif
 }
 
@@ -4974,6 +4106,10 @@ int prevSIMINTERVAL=0;
 void loop(void) {
   int count, a;
   int t=micros();
+
+#ifdef PICOW
+  telnets.loop();
+#endif
 
   // update MIPS when changing speed
   if (!novaRunning || prevSIMINTERVAL!=SIMINTERVAL || runtime>10000000)
@@ -4995,16 +4131,6 @@ void loop(void) {
   { processSerial(count);
     //if (SerialIO) return;
   }
-#ifdef WIFI
-  else if (WIFI && (count=WIFI.available()))
-  { hasWIFI = true;
-    processWifi(count);
-    if (SerialIO) return;
-  }
-
-  if (!client) client = server.accept();
-  //if (!client.connected()) client = NULL;
-#endif
 
   // Button presses?
   a=getButtonPress(false);
