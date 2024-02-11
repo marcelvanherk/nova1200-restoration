@@ -4,6 +4,9 @@
 
 /////////////////////////////////////////////////////////////////
 
+#include <Arduino.h>
+#ifndef CORE_TEENSY
+
 #include "TelnetStream.h"
 
 ESPTelnetBase::ESPTelnetBase() {
@@ -419,3 +422,5 @@ size_t TelnetStream::println(const Printable& x) {
   write('\n');
   return r+1;
 }
+
+#endif
