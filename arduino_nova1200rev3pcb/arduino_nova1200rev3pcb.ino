@@ -38,19 +38,18 @@
 //           Note: serial output to Nova is not yet working for Maker even on Serial2 (wrong pins?)
 // 20230203: Added Arduino Nano ESP32 (for its Wifi, not yet enabled)
 // 20230210: Wifi is working using internal eeprom-stored credentials; rest uses external eeprom
-// 20230210: Removed TEENSY define; stop support for original Nano
+// 20230210: Removed TEENSY define; stop support for original Nano, TEENSY is default
+// 20230211: Updated telnetstream; allow AP mode (use SSID starting with AP)
 
 //#define RP2040    // Cytron Maker RP2040 (3.3V)
 #define NANOESP32   // or Arduino Nano ESP32 (3.3V)
-                    // default Teensy3.2 (5V) or Teensy4.1 (3.3V)
-// With 3V3 boards modify PC to protect lightint & I2c pins
+                    // default Teensy3.2 (5V) or Teensy4.0 (3.3V)
+// With 3V3 boards modify old PCB to protect lightint & I2c pins
 
 #ifdef NANOESP32
 #include "TelnetStream.h"
-#include <ESPTelnet.h>
 #include <MergedStreams.h>
 TelnetStream telnets;
-ESPTelnet etelnet;
 MergedStreams mergedStreams(Serial, telnets);
 #define Serial mergedStreams // mergedStreams
 #endif
@@ -3352,25 +3351,45 @@ void setup() {
     for(int i=0; i<10; i++) 
       u8g2log.println();
     u8g2log.println(ssid);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-    int n=1;
-    while(WiFi.status() != WL_CONNECTED) {
-      delay(100);
-      u8g2log.print(".");
-      if ((n&31)==0) 
-        u8g2log.println();
-      if (n>200) {
-        u8g2log.println("Failed to connect");
-        return;
-      }
-      n++;
-    }
+
+    // ssid starting with AP work in access point mode; else station mode
+    if (ssid[0]!='A' || ssid[1]!='P')
+    { WiFi.mode(WIFI_STA);
+      WiFi.begin(ssid, password);
   
+      int n=1;
+      while(WiFi.status() != WL_CONNECTED) {
+        delay(100);
+        u8g2log.print(".");
+        if ((n&31)==0) 
+          u8g2log.println();
+        if (n>200) {
+          u8g2log.println("Failed to connect");
+          return;
+        }
+        n++;
+      }
+  
+      IPAddress ip = WiFi.localIP();
+      Serial.println();
+      u8g2log.println(ip);
+      Serial.print("Telnet Server IP: "); Serial.println(ip);
+    }
+    else
+    { WiFi.mode(WIFI_AP);
+      WiFi.softAP(ssid, password);
+      while(!SYSTEM_EVENT_AP_START){delay(100);}
+      u8g2log.println(ssid);
+      u8g2log.print("AP IP address: ");
+      u8g2log.println(WiFi.softAPIP());
+      Serial.print("AP IP address: ");
+      Serial.println(WiFi.softAPIP());
+    }
+
     telnets.onConnect(telnetConnected);
     telnets.onDisconnect(telnetDisconnected);
     telnets.onReconnect(telnetReconnect);
-    etelnet.setLineMode(false);
+    //telnets.setLineMode(false);
   
     Serial.print("Telnet.begin: ");
     if(telnets.begin()) {
@@ -3378,11 +3397,6 @@ void setup() {
     } else {
       Serial.println("Failed");
     }
-  
-    IPAddress ip = WiFi.localIP();
-    Serial.println();
-    u8g2log.println(ip);
-    Serial.print("Telnet Server IP: "); Serial.println(ip);
   }
 #endif
 }

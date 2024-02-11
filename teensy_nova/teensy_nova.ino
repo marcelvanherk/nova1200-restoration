@@ -90,7 +90,7 @@ Marcel van Herk, 21 January 2024   - Added wifi commands, PICOW define, rudiment
 Marcel van Herk, 23 January 2024   - Also PICO uses fast TFT_eSPI for ILI9341; detect out of memory
                                    - on PICOW MEMSIZE 32768 does not work - cannot store sessions
                                    - session auto|manual command; Note: coded sessions assume 32768 memory size
-Marcel van Herk, 11 February 2024  - Added PICOW telnet access, simplified WIFI code using MergeStreams
+Marcel van Herk, 11 February 2024  - Added PICOW telnet, simplified WIFI using MergeStreams, added AP mode when SSID starts with AP
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -4066,20 +4066,38 @@ delay(100);
       Serial.println();
     Serial.println(ssid);
     tft.println(ssid);
-    WiFi.mode(WIFI_STA);
-    WiFi.begin(ssid, password);
-    int n=1;
-    while(WiFi.status() != WL_CONNECTED) {
-      delay(100);
-      Serial.print(".");
-      if ((n&31)==0) 
-        Serial.println();
-      if (n>200) {
-        Serial.println("Failed to connect");
-        tft.println("Failed to connect");
-        return;
+    // ssid starting with AP work in access point mode; else station mode
+    if (ssid[0]!='A' || ssid[1]!='P')
+    { WiFi.mode(WIFI_STA);
+      WiFi.begin(ssid, password);
+      int n=1;
+      while(WiFi.status() != WL_CONNECTED) {
+        delay(100);
+        Serial.print(".");
+        if ((n&31)==0) 
+          Serial.println();
+        if (n>200) {
+          Serial.println("Failed to connect");
+          tft.println("Failed to connect");
+          return;
+        }
+        n++;
       }
-      n++;
+      IPAddress ip = WiFi.localIP();
+      Serial.println();
+      tft.println(ip);
+      Serial.print("Telnet Server IP: "); Serial.println(ip);
+    }
+    else
+    { WiFi.mode(WIFI_AP);
+      WiFi.softAP(ssid, password);
+      // while(!SYSTEM_EVENT_AP_START)
+      delay(100);
+      tft.println(ssid);
+      tft.print("AP IP address: ");
+      tft.println(WiFi.softAPIP());
+      Serial.print("AP IP address: ");
+      Serial.println(WiFi.softAPIP());
     }
   
     telnets.onConnect(telnetConnected);
@@ -4090,11 +4108,6 @@ delay(100);
     if(!telnets.begin()) {
       Serial.println("Telnet failed");
     }
-  
-    IPAddress ip = WiFi.localIP();
-    Serial.println();
-    tft.println(ip);
-    Serial.print("Telnet Server IP: "); Serial.println(ip);
   }
 #endif
 }
