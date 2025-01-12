@@ -94,6 +94,9 @@
 // mvh 20190717 Added tape loaded tape FILENAME (max 12 characters)
 // mvh 20190720 tape list, store, restore, fp xx, HALT at xxx
 // mvh 20210411 Align with rev3pcb code; added tapeloader storing .basic in code; K upload
+// mvh 20250111 ctrl-c clears line; attempt to run ILI9341 display breakout instead of LED breakout
+// mvh 20250111 GRDISPLAY accepts A0,A1 = val,count; eg val,1 or addr,80
+// mvh 20250112 eeprom command also lists ascii; fix tape list deviceaddress; store/restore 16KW
 
 // TODO: mode to list serial reply in hex
 // Do I need to keep @ as cancel for direct mode? 
@@ -106,15 +109,17 @@
 //Nano to Teensy (3.5 or 3.2) mapping:
 //GND	GND	GND
 //D2	D0	D0
+//..  ..  ..
+//D6  D4  A0          TFTDC
 //..	..	..
 //D12	D10	ENLCD1
 //D13	A1	ENLCD2
 //A0	A4	--- (KEYP)
 //A1	A5	--- 
-//A2	A6	LCD4
-//A3	A7	LCD5
-//A4	A8	LCD6
-//A5	A9	LCD7
+//A2	A6	LCD4        TFTCS
+//A3	A7	LCD5        TFTSCK
+//A4	A8	LCD6  I2C   TFTMOSI
+//A5	A9	LCD7  I2C
 //A6	X (3.3 V)	---
 //A7	--- (AGND)	---
 //5V	Vin	5V
@@ -124,6 +129,16 @@
 
 #ifdef TEENSY
 #include <LiquidCrystalFast.h>
+#include "Adafruit_ILI9341.h"
+#define TFTDC 4
+#define TFTCS A6
+#define TFTSCK A7
+#define TFTMOSI A8
+#define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFTCS, TFTDC, TFTMOSI, TFTSCK);
+int grzoom=1;
+int graddress=0;
+int grmono=0;
 #else
 #include <LiquidCrystal.h>
 #endif
@@ -272,7 +287,10 @@
 #define SKIPDONE   067377 // skip when character available
 #define DELAY      067277 // Delay A0 ms, showing A1 on lights
 #define ADC        067177 // Read A0 from teensy
-// 6 are open 06[3,7][1-3]77 except 063077; maybe add 
+#define GRMODE     063377 // A0 = MONO/ZOOM/CLEAR/HIGHADDRESS A1 = ADDRESS
+#define GRDISPLAY  063277 // A0 = Pixel value/addr A1 = count (A0 is address for count>1)
+#define GRNEXT     063177 
+// 2 are open 06[3,7][1-3]77 except 063077; maybe add 
 // HWMUL, HWDIV, DEVICESEL, SKIPBUSYZ (always skip)
 
 // test assembly program for switch based input
@@ -750,6 +768,7 @@ void WriteReg(byte n, byte value) {
 unsigned short memsize=0;
 int lcdpos=0;
 bool clearline=false;
+int disableLCD = 0;
 
 void setup() {
 
@@ -763,6 +782,10 @@ void setup() {
   pinMode(12, OUTPUT); // free pins
   pinMode(11, OUTPUT);
   analogWriteResolution(12);
+
+  tft.begin(100000);
+  tft.setRotation(3);
+  tft.fillScreen(ILI9341_RED);
 #else
   for (byte i=2; i<=11; i++) 
     pinMode(i, OUTPUT);
@@ -785,6 +808,7 @@ void setup() {
   Serial2.begin(4800,SERIAL_8N1);
 #endif
 
+  disableLCD = 0;
   lcdpos=0;
   clearline=false;
   lcd.begin(40, 2);   // welcome text on LCD
@@ -1065,31 +1089,38 @@ String makespc(int n)
 }
 
 void lcdprint(String text)
-{ lcd.print(text);
+{ if (disableLCD) return;
+  lcd.print(text);
 }
 
 void lcdwrite(uint8_t c)
-{ lcd.write(c);  
+{ if (disableLCD) return;
+  lcd.write(c);  
 }
 
 void lcdsetCursor(int x, int y)
-{ lcd.setCursor(x,y);
+{ if (disableLCD) return;
+  lcd.setCursor(x,y);
 }
 
 void lcdcursor(void)
-{ lcd.cursor();
+{ if (disableLCD) return;
+  lcd.cursor();
 }
 
 void lcdnoCursor(void)
-{ lcd.noCursor();
+{ if (disableLCD) return;
+  lcd.noCursor();
 }
 
 void lcdclear(void)
-{ lcd.clear();
+{ if (disableLCD) return;
+  lcd.clear();
 }
 
 void lcdclearline(int y)
-{ lcd.setCursor(0, y);
+{ if (disableLCD) return;
+  lcd.setCursor(0, y);
   lcd.print(makespc(40));
 }
 
@@ -1187,7 +1218,8 @@ void lcdPrintLongOctal(unsigned long v) {
 
 // print help string on 3rd line of big LCD
 void printHelp(String a)
-{ lcd2.setCursor(0, 0);
+{ if (disableLCD) return;
+  lcd2.setCursor(0, 0);
   lcd2.print(makespc(40));
   lcd2.setCursor(0, 0);
   lcd2.print(a);
@@ -1293,6 +1325,9 @@ String printDisas(unsigned int v, int octalmode) {
   else if (v==SKIPBUSYZ)        s+=(".SKIPBUSYZ");
   else if (v==DELAY)            s+=(".DELAY");
   else if (v==ADC)              s+=(".ADC");
+  else if (v==GRMODE)           s+=(".GRMODE");
+  else if (v==GRDISPLAY)        s+=(".GRDISPLAY");
+  else if (v==GRNEXT)           s+=(".GRNEXT");
   else if (v==HALT)             s+=("HALT");    //doc0, 4 bits free
   else if ((v&0xe73f)==0x663f)  s+=(".HALT");   // unused system call
 
@@ -2452,6 +2487,7 @@ void processSerial(int count)
       stopNova();
       Serial.println("ctrl-C");
       Serial.print(">");
+      line="";
       return;
     }
     else
@@ -2487,6 +2523,7 @@ void processSerial(int count)
     stopNova();
     Serial.println("ctrl-C");
     Serial.print(">");
+    line="";
     return;
   }
 
@@ -2937,8 +2974,8 @@ void processSerial(int count)
       // restore memory from eeprom
       else if (line.startsWith("restore"))
       { unsigned short a = 0;
-        unsigned short b = 1028-memsize/128;
-        unsigned short c = memsize/128;
+        unsigned short b = 1028-memsize/64;
+        unsigned short c = memsize/64;
         unsigned short s=a;
         for (int block=b; block<b+c; block++,a+=64)
           readBlockfromEEPROM(block, a);
@@ -2968,8 +3005,8 @@ void processSerial(int count)
       // store memory to eeprom
       else if (line.startsWith("store"))
       { unsigned short a = 0;
-        unsigned short b = 1028-memsize/128;
-        unsigned short c = memsize/128;
+        unsigned short b = 1028-memsize/64;
+        unsigned short c = memsize/64;
         unsigned short s=a;
         for (int block=b; block<b+c; block++,a+=64)
           writeBlocktoEEPROM(block, a);
@@ -3008,7 +3045,8 @@ void processSerial(int count)
 
       // set line of LCD
       else if (line.startsWith("lcd "))
-      { int pos1 = 4;
+      { disableLCD = 0;
+        int pos1 = 4;
         int pos2 = line.indexOf(' ', pos1+1);
         if (pos2>=0)
         { unsigned short a = readOct(line, pos1);
@@ -3066,11 +3104,22 @@ void processSerial(int count)
         unsigned short a = readOct(line, pos1);
         int deviceaddress = 0x53;                  
         if (a>515) deviceaddress+=4;
+        String t;
         for (short i=0; i<128; i++)
         { String s;
-          if (a<4) s = toHex2(EEPROM.read(a*128+i));
-          else     s = toHex2(i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i));
-          if ((i&15)==15) Serial.println(s); else Serial.print(s);
+          int v;
+          if (a<4) v = EEPROM.read(a*128+i);
+          else     v = i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i);
+          s = toHex2(v);
+          t = t + char(max(v&255,32));
+          if ((i&15)==15) 
+          { Serial.print(s);
+            Serial.print(" ");
+            Serial.println(t);
+            t = "";
+          }
+          else 
+            Serial.print(s);
         }
         nextcmd = "eeprom "+toOct(a+1);
       }
@@ -3231,7 +3280,7 @@ void processSerial(int count)
         // search all 128 character blocks on external eeprom (address 4 and up)
         int block=-1;
         for(int a=4; a<1028; a++)
-        { if (a>515) deviceaddress+=4;
+        { if (a==516) deviceaddress+=4;
           block = -1;
           if (i2c_eeprom_read_byte(deviceaddress, (a-4)*128+0)=='$')
           { if (i2c_eeprom_read_byte(deviceaddress, (a-4)*128+1)=='$')
@@ -3316,6 +3365,55 @@ void processSerial(int count)
           Serial.println("Tape "+filename+" not found");
       }
 
+      else if (line.startsWith("grmode "))
+      { int pos1 = 7;
+        unsigned short a = readOct(line, pos1);
+        graddress = 0;
+        grzoom = (a&0x1e)>>1;
+        int grclear = (a&0x20);
+        grmono = (a&0xffc0)>>6;
+        //disableLCD = 1;
+        Serial.println(grmono);
+        Serial.println(grzoom);
+        pinMode(4, OUTPUT);
+        pinMode(A6, OUTPUT);
+        pinMode(A7, OUTPUT);
+        pinMode(A8, OUTPUT);
+        digitalWrite(4, HIGH);
+        digitalWrite(A6, HIGH);
+        digitalWrite(A7, LOW);
+        digitalWrite(A8, LOW);
+        if (grclear) 
+        { tft.fillRect(0, 0, 320, 240, ILI9341_BLACK);
+        }
+      }
+
+      else if (line.startsWith("grdisplay "))
+      { int pos1 = 10;
+        int val = readOct(line, pos1);
+        if (grmono)
+        { if (val>32767) val = val-65536;
+          val = val / grmono;
+          if (val<0) val=0;
+          if (val>255) val=255;
+          val = CL(val, val, val);
+        }
+        pinMode(4, OUTPUT);
+        pinMode(A6, OUTPUT);
+        pinMode(A7, OUTPUT);
+        pinMode(A8, OUTPUT);
+        digitalWrite(4, HIGH);
+        digitalWrite(A6, HIGH);
+        digitalWrite(A7, LOW);
+        digitalWrite(A8, LOW);
+        tft.fillRect(graddress%320, 0+(graddress/320), grzoom, grzoom, val);
+        graddress += grzoom;
+        if((graddress%320)<grzoom) graddress = (graddress/320 + grzoom-1) * 320;
+      }
+
+      else if (line.length()>0)
+        Serial.println("Unknown or mistyped command ignored");
+
       Serial.print(">");
       line = "";
     }
@@ -3392,7 +3490,8 @@ int kbkey=0;                        // detected key 1..12 on keypad
 
 // write character to LCD interpreting minimal control codes
 void putLCD(byte b)
-{ lcdpos = lcdpos % 160;
+{ if (disableLCD) return;
+  lcdpos = lcdpos % 160;
   if      (b==12) { lcdclear(); lcd2.clear(); lcdpos=0; }
   else if (b==13) { lcdpos = lcdpos - lcdpos%40; clearline=true; }
   else if (b==10) { lcdpos = lcdpos + 40; clearline=true; }
@@ -3638,6 +3737,72 @@ void loop() {
       }
       else if (haltInstruction==GETC)
       { break; // handled in serial and keyboard code
+      }
+      else if (haltInstruction==GRMODE)
+      { int mode = examineAC(0);
+        graddress = ((mode&1)<<16)+examineAC(1);
+        grzoom = (mode&0x1e)>>1;
+        int grclear = (mode&0x20);
+        grmono = (mode&0xffc0)>>6;
+        //disableLCD = 1;
+        pinMode(4, OUTPUT);
+        pinMode(A6, OUTPUT);
+        pinMode(A7, OUTPUT);
+        pinMode(A8, OUTPUT);
+        digitalWrite(4, HIGH);
+        digitalWrite(A6, HIGH);
+        digitalWrite(A7, LOW);
+        digitalWrite(A8, LOW);
+        if (grclear) 
+        { tft.fillRect(0, 0, 320, 240, ILI9341_BLACK);
+        }
+        examine(haltAddress);
+        continueNova();
+      }
+      else if (haltInstruction==GRDISPLAY)
+      { int val = examineAC(0);
+        int rep = examineAC(1);
+        if (rep==0) rep=1;
+        int addr= val;
+        for (int i=0; i<rep; i++)
+        { if (rep>1)
+          { val = examine(addr+i);
+          }
+          if (grmono)
+          { if (val>32767) val = val-65536;
+            val = val / grmono;
+            if (val<0) val=0;
+            if (val>255) val=255;
+            val = CL(val, val, val);
+          }
+          pinMode(4, OUTPUT);
+          pinMode(A6, OUTPUT);
+          pinMode(A7, OUTPUT);
+          pinMode(A8, OUTPUT);
+          digitalWrite(4, HIGH);
+          digitalWrite(A6, HIGH);
+          digitalWrite(A7, LOW);
+          digitalWrite(A8, LOW);
+          tft.fillRect(graddress%320, 0+(graddress/320), grzoom, grzoom, val);
+          graddress += grzoom;
+          if((graddress%320)<grzoom) graddress = (graddress/320 + grzoom-1) * 320;
+          if (graddress>240*320) graddress=0;
+        }
+        if (rep>1) depositAC(0, addr+rep);
+        examine(haltAddress);
+        continueNova();
+      }
+      else if (haltInstruction==GRNEXT)
+      { while(1)
+        { graddress += grzoom;
+          if((graddress%320)<grzoom) 
+          { graddress = (graddress/320 + grzoom-1) * 320;
+            break;
+          }
+        }
+        if (graddress>240*320) graddress=0;
+        examine(haltAddress);
+        continueNova();
       }
       else if (haltInstruction==HALT)
       { Serial.println("HALT at address: "+toOct(haltAddress));

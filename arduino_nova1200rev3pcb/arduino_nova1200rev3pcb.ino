@@ -40,6 +40,7 @@
 // 20230210: Wifi is working using internal eeprom-stored credentials; rest uses external eeprom
 // 20230210: Removed TEENSY define; stop support for original Nano, TEENSY is default
 // 20230211: Updated telnetstream; allow AP mode (use SSID starting with AP)
+// 20250112: Fix deviceaddress in tape list command; reset line on ctrl-c; eeprom also lists ascii
 
 //#define RP2040    // Cytron Maker RP2040 (3.3V)
 #define NANOESP32   // or Arduino Nano ESP32 (3.3V)
@@ -2335,6 +2336,7 @@ void processSerial(int count)
       stopNova();
       Serial.println("ctrl-C");
       Serial.print(">");
+      line="";
       return;
     }
     else
@@ -2383,6 +2385,7 @@ void processSerial(int count)
     stopNova();
     Serial.println("ctrl-C");
     Serial.print(">");
+    line="";
     return;
   }
 
@@ -2867,10 +2870,21 @@ void processSerial(int count)
         unsigned short a = readOct(line, pos1);
         int deviceaddress = 0x50;                  
         if (a>511) deviceaddress+=4;
+        String t;
         for (short i=0; i<128; i++)
         { String s;
-          s = toHex2(i2c_eeprom_read_byte(deviceaddress, a*128+i));
-          if ((i&15)==15) Serial.println(s); else Serial.print(s);
+          int v;
+          v=i2c_eeprom_read_byte(deviceaddress, a*128+i);
+          s = toHex2(v);
+          t = t + char(max(v&255,32));
+          if ((i&15)==15) 
+          { Serial.print(s);
+            Serial.print(" ");
+            Serial.println(t);
+            t = "";
+          }
+          else 
+            Serial.print(s);
         }
         nextcmd = "eeprom "+toOct(a+1);
       }
@@ -3034,7 +3048,7 @@ void processSerial(int count)
         // search all 128 character blocks on external eeprom (address 4 and up)
         int block=-1;
         for(int a=0; a<1024; a++)
-        { if (a>511) deviceaddress+=4;
+        { if (a==512) deviceaddress+=4;
           block = -1;
           if (i2c_eeprom_read_byte(deviceaddress, a*128+0)=='$')
           { if (i2c_eeprom_read_byte(deviceaddress, a*128+1)=='$')
