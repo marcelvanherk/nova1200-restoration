@@ -97,6 +97,10 @@
 // mvh 20250111 ctrl-c clears line; attempt to run ILI9341 display breakout instead of LED breakout
 // mvh 20250111 GRDISPLAY accepts A0,A1 = val,count; eg val,1 or addr,80
 // mvh 20250112 eeprom command also lists ascii; fix tape list deviceaddress; store/restore 16KW
+// mvh 20250115 'eeprom' blocks 0170000-0170547 contain 180 x 128 sinogram (from emiprojector.lua)
+// mvh 20250115 MESSAGE shows correct string with eg %0 subsituted on first LCD line
+// mvh 20250117 redone MESSAGE add %f is %1.%0 %4 or %l is %1%0 as 32 bits; added sinogram_2
+// mvh 20250119 Added dump10 command; lcd darkgreen; MESSAGE no ; on lcd
 
 // TODO: mode to list serial reply in hex
 // Do I need to keep @ as cancel for direct mode? 
@@ -785,7 +789,7 @@ void setup() {
 
   tft.begin(100000);
   tft.setRotation(3);
-  tft.fillScreen(ILI9341_RED);
+  tft.fillScreen(CL(0, 80, 0));
 #else
   for (byte i=2; i<=11; i++) 
     pinMode(i, OUTPUT);
@@ -2375,6 +2379,7 @@ String("Kaddr/val             write memory location(s)\r\n")+
 String("val                   write next\r\n")+
 String("K                     stop write mode\r\n")+
 String("dump address[ length] dump memory\r\n")+
+String("dump10 address[ length] dump memory in decimal without addresses\r\n")+
 String("list address[ length] list assembly (numbers are octal)\r\n")+
 String("asm addr INST         assemble to memory (slow, INST exactly as disassembled)\r\n")+
 String("go addr               run at memory location\r\n")+
@@ -2468,6 +2473,9 @@ bool InteractiveDebugger=false;     // if set serial debugger is more interactiv
 
 bool kmode=false;
 int kaddress=0;
+
+#include "nova_sinogram1.h"
+#include "nova_sinogram2.h"
 
 void processSerial(int count)
 { byte b = Serial.read();
@@ -2803,6 +2811,22 @@ void processSerial(int count)
         examine(pc);
       }
 
+      // dump memory decimal (e.g. to grab image)
+      else if (line.startsWith("dump10 "))
+      { int pos1 = 7;
+        int pos2 = line.indexOf(' ', 8);
+        unsigned short a = readOct(line, pos1);
+        int b = pos2<0 ? 16 : readOct(line, pos2+1);
+        for (unsigned short i=0; i<b; i++)
+        { signed short v=examine(a++);
+          if (i%80==0) Serial.println("");
+          Serial.print(v);
+          Serial.print(",");
+        }
+        nextcmd = "dump10 "+toOct(a)+" "+toOct(b);
+        examine(pc);
+      }
+
       // read or set accumulator
       else if (line.startsWith("ac"))
       { int pos1 = 2;
@@ -3108,8 +3132,18 @@ void processSerial(int count)
         for (short i=0; i<128; i++)
         { String s;
           int v;
-          if (a<4) v = EEPROM.read(a*128+i);
-          else     v = i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i);
+          if (a<4) 
+            v = EEPROM.read(a*128+i);
+          else if (a>=0xf200) 
+          { v = nova_sinogram2[(a-0xf200)*64+i/2];
+            if (i&1) v = v>>8; else v = v&255;
+          }
+          else if (a>=0xf000) 
+          { v = nova_sinogram1[(a-0xf000)*64+i/2];
+            if (i&1) v = v>>8; else v = v&255;
+          }
+          else     
+            v = i2c_eeprom_read_byte(deviceaddress, (a-4)*128+i);
           s = toHex2(v);
           t = t + char(max(v&255,32));
           if ((i&15)==15) 
@@ -3373,8 +3407,8 @@ void processSerial(int count)
         int grclear = (a&0x20);
         grmono = (a&0xffc0)>>6;
         //disableLCD = 1;
-        Serial.println(grmono);
-        Serial.println(grzoom);
+        //Serial.println(grmono);
+        //Serial.println(grzoom);
         pinMode(4, OUTPUT);
         pinMode(A6, OUTPUT);
         pinMode(A7, OUTPUT);
@@ -3525,6 +3559,18 @@ void readBlockfromEEPROM(int block, unsigned int A)
     { deposit(A+i, EEPROM.read(address+i*2)<<8|EEPROM.read(address+i*2+1));
     }
   }
+  else if (block>=0xf200)
+  { unsigned int address=(block-0xf200)*64;
+    for (int i=0; i<64; i++)
+    { deposit(A+i, nova_sinogram2[i+address]);
+    }
+  }
+  else if (block>=0xf000)
+  { unsigned int address=(block-0xf000)*64;
+    for (int i=0; i<64; i++)
+    { deposit(A+i, nova_sinogram1[i+address]);
+    }
+  }
   else
   { int deviceaddress = 0x53;
     if (block>515) deviceaddress+=4;
@@ -3629,29 +3675,59 @@ void loop() {
       }
       else if (haltInstruction==MESSAGE) // write character string from address in A2
       { int a = examineAC(2);
-        bool flag=false;
+        char byteArray[80];
         for (int i=0; i<40; i++)
         { unsigned short s=examine(a+i);
-          unsigned short s2=examine(a+i+1);
-          byte b = s>>8;
-          if (b==0) break;
-          if (!flag)
-          { if (b=='%') { Serial.print(String((short)examineAC(s&3))); flag=true; }
-            else Serial.write(b);
-            putLCD(b);
-          }
-          else
-            flag=false;
-          b = s&255;
-          if (b==0) break;
-          if (!flag)
-          { if (b=='%') { Serial.print(String((short)examineAC((s2>>8)&3))); flag=true; }
-            else Serial.write(b);
-            putLCD(b);
-          }
-          else
-            flag=false;
+          byteArray[i*2]=s>>8;
+          byteArray[i*2+1]=s&255;
+          if ((s>>8)==0) break;
+          if ((s&255)==0) break;
         }
+        String str;
+        int v;
+        float f;
+        String st;
+        for (int i=0; i<79; i++)
+        { char b = byteArray[i];
+          char b2 = byteArray[i+1];
+          if (b==0) break;
+          if (b==1)
+          { // ignored character
+          }
+          else if (b=='\n' || b=='\r')
+          { Serial.println();
+            str = str + " ";
+          }
+          else if (b=='%' && b2=='f') 
+          { f = ((((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0))/65536.0;
+            st = String(f);
+            Serial.print(st); 
+            str = str + st;
+            byteArray[i+1]=1;
+          } 
+          else if (b=='%' && (b2=='l' || b2=='4'))
+          { v = (((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0);
+            st = String(v);
+            Serial.print(st); 
+            str = str + st;
+            byteArray[i+1]=1;
+          }
+          else if (b=='%' && (b2>='0' && b2<='3')) 
+          { v = (short)examineAC(b2&3);
+            st = String(v);
+            Serial.print(st); 
+            str = str + st;
+            byteArray[i+1]=1;
+          }
+          else 
+          { Serial.write(b);
+            str.concat(char(b));
+          }
+        }
+        lcdsetCursor(0, 0);
+        for (int i=0; i<40; i++) lcdwrite(' ');
+        lcdsetCursor(0, 0);
+        lcdprint(str);
         examine(haltAddress);
         continueNova();
         continue;
