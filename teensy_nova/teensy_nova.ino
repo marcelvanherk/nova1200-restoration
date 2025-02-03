@@ -90,22 +90,47 @@ Marcel van Herk, 21 January 2024   - Added wifi commands, PICOW define, rudiment
 Marcel van Herk, 23 January 2024   - Also PICO uses fast TFT_eSPI for ILI9341; detect out of memory
                                    - on PICOW MEMSIZE 32768 does not work - cannot store sessions
                                    - session auto|manual command; Note: coded sessions assume 32768 memory size
-Marcel van Herk, 11 February 2024  - Added PICOW telnet, simplified WIFI using MergeStreams, added AP mode when SSID starts with AP
-Marcel van Herk, 11 February 2024  - Some fixes for Teensy
+Marcel van Herk, 27 December 2024  - Added PICOWS35; adds GRMODE GRDISPLAY GRNEXT for unused bottom display half
+Marcel van Herk, 29 December 2024  - READBLOCK, WRITEBLOCK, ; and eeprom work on 8MB data.bin
+Marcel van Herk, 9 January 2025    - ctrl-c resets command line; fix WRITELED for PICO
+Marcel van Herk, 11 January 2025   - GRDISPLAY accepts A0,A1 = val,count; eg val,1 or addr,80; extended INFO
+Marcel van Herk, 17 January 2025   - 'eeprom' blocks 0170000-0170547 contain 180 x 128 sinogram (from emiprojector.lua)
+Marcel van Herk, 17 January 2025   - redone MESSAGE add %f is %1.%0 %4 or %l is %1%0 as 32 bits; added sinogram_2
+Marcel van Herk, 20 January 2025   - dump10, readraw, writeraw, screendump (does not work)
+Marcel van Herk, 21 January 2025   - Added .recondemo; split interpret code passing serial Stream; avoid 0 session IDs
+Marcel van Herk, 22 January 2025   - output MESSAGE to emulated display (and serial), recondemo in menu
+Marcel van Herk, 24 January 2025   - WIP use seesaw encoder to control menu; allow multiple commands split by |; allow text:command in menu()
+Marcel van Herk, 25 January 2025   - Refactored menu code, added range to menu, different submenus
+Marcel van Herk, 26 January 2025   - Substitute eg %0 in command line; echo command; GRDISPLAY also works on smaller screen (overlays terminal, size 320x147)
+Marcel van Herk, 26 January 2025   - READBLOCK/WRITEBLOCK ff00/ffff reads/writes SD file 000000-000377; close with READBLOCK 0; bshr demo; default speed up
+Marcel van Herk, 27 January 2025   - Expand to 4 sinograms
+Marcel van Herk, 29 January 2025   - Added C version of Nova reconstruction (0.3s on pico2)
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
 //#define ARDUINO_TEENSY35
 
 // select breadboard type or Featherwing TFT board (define none or one)
-#define FEATHERWING_TFT_TOUCH
+//#define FEATHERWING_TFT_TOUCH
 //#define LAZY_BREADBOARDTFT
 //#define LAZY_BREADBOARDBTN
 //#define PICO
-//#define PICOWS
-//#define PICOD2
+//#define PICOWS // waveshare 2.8 inch
+#define PICOWS35 // waveshare 3.5 inch
+//#define PICOD2 // pico display pack 2
+
 
 //#define PICOW  // has built-in wifi; but uses more memory even if wifi not used - need to reduce MEMSIZE to 16384
+
+#ifdef PICOW
+#include <WiFi.h>
+char ssid[18];
+char password[18];
+int port = 4242;
+WiFiServer server(port);
+WiFiClient client;
+#define WIFI client
+#endif
 
 #include "SPI.h"
 #if defined(PICOD2)
@@ -159,6 +184,64 @@ Marcel van Herk, 11 February 2024  - Some fixes for Teensy
 #define ILI9341_RED    TFT_RED
 #define ILI9341_YELLOW TFT_YELLOW
 #define ILI9341_WHITE  TFT_WHITE
+
+#  define A4 0
+#  define A5 0
+#  define A6 0
+#  define A7 0
+
+#elif defined(PICOWS35)
+// put this in: C:\Users\marcel\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
+/*
+#define RPI_DISPLAY_TYPE
+#define ILI9488_DRIVER
+#define TFT_WIDTH  320
+#define TFT_HEIGHT 480
+#define TFT_MISO  12
+#define TFT_MOSI  11
+#define TFT_SCLK  10
+#define TFT_CS    9
+#define TFT_DC    8
+#define TFT_RST   15
+#define TFT_RGB_ORDER TFT_BGR
+//#define RP2040_PIO_SPI 
+#define TOUCH_CS  16
+#define TFT_SPI_PORT 1
+#define TFT_BL   13  // LED back-light
+#define TFT_BACKLIGHT_ON HIGH  // Level to turn ON back-light (HIGH or LOW)
+#define SPI_FREQUENCY  80000000
+#define TFT_INVERSION_ON
+*/
+
+#include "TFT_eSPI.h"
+
+#define ILI9341_BLACK  TFT_BLACK
+#define ILI9341_RED    TFT_RED
+#define ILI9341_YELLOW TFT_YELLOW
+#define ILI9341_WHITE  TFT_WHITE
+
+#  define A4 0
+#  define A5 0
+#  define A6 0
+#  define A7 0
+
+//#define SDIO_CLK 5
+//#define SDIO_CMD 18
+//#define SDIO_D0 19
+//#define SDIO_D1 20
+//#define SDIO_D2 21
+//#define SDIO_D3 22
+#define SD_CS 22
+
+#include "Adafruit_seesaw.h"
+#include <seesaw_neopixel.h>
+#define SS_SWITCH        24
+#define SS_NEOPIX        6
+#define SEESAW_ADDR      0x36
+Adafruit_seesaw ss;
+seesaw_NeoPixel sspixel = seesaw_NeoPixel(1, SS_NEOPIX, NEO_GRB + NEO_KHZ800);
+int32_t encoder_position;
+int encoder_button;
 
 #elif defined(PICO)
 // put this in: C:\Users\marcel\Documents\Arduino\libraries\TFT_eSPI\User_Setup.h
@@ -219,26 +302,6 @@ Marcel van Herk, 11 February 2024  - Some fixes for Teensy
 #endif
 
 #ifdef PICOWS
-#  define TFT_MISO 12
-#  define TFT_SCK 10
-#  define TFT_MOSI 11
-#  define TFT_DC 8
-#  define TFT_CS 9
-#  define TFT_LED 13
-#  define TFT_RESET 15
-#  define A4 0
-#  define A5 0
-#  define A6 0
-#  define A7 0
-#  define BUTTON1 2
-#  define BUTTON2 2 // unused
-#  define BUTTON3 2 // unused
-#  define BUTTON4 2 // unused
-#  define BUTTON5 2 // unused
-#  define BUTTON6 2
-#  define BUTTON7 2
-#  define BUTTON8 2
-#  define TOUCH_CS 16
 #endif
 
 #ifdef PICO
@@ -314,7 +377,7 @@ Marcel van Herk, 11 February 2024  - Some fixes for Teensy
 #  define PS2_DATA 0
 #  define PS2_VCC 14
 #  define PWRBUTTON 15
-#  define ONOFFSLIDER 5
+#  define ONOFFSLIDER 5  // using wire
 #  define WIFI Serial4
    // free pins a2=16, a3=17, a6=20, a14=on/off
 #endif
@@ -377,21 +440,6 @@ Marcel van Herk, 11 February 2024  - Some fixes for Teensy
 #  define BUTTON8 0
 #endif
 
-#ifdef PICOW
-#include "TelnetStream.h"
-#include <MergedStreams.h>
-TelnetStream telnets;
-MergedStreams mergedStreams(Serial, telnets);
-#define MSerial mergedStreams
-
-#elif defined(WIFI)
-#include <MergedStreams.h>
-MergedStreams mergedStreams(Serial, WIFI);
-#define MSerial mergedStreams
-#else
-#define MSerial Serial
-#endif
-
 #include "EEPROM.h"
 /* layout:
  * 0-1   state of NOVA switches
@@ -407,14 +455,20 @@ MergedStreams mergedStreams(Serial, WIFI);
 // set up variables using the SD utility library functions:
 #ifdef SD_CS
 # include <SD.h>
-  Sd2Card card;
-  SdVolume volume;
-  SdFile root;
+#ifndef PICOWS35
+  //Sd2Card card;
+  //SdVolume volume;
+  //SdFile root;
+#else
+  SdCard card;
+  FsVolume volume;
+  FsFile root;
+#endif
   File myFile;
 #endif
 
 #ifdef TOUCH_CS
-#ifdef PICOWS
+#if defined(PICOWS) || defined(PICOWS35)
   #define touch tft
 #else
   Adafruit_STMPE610 touch=Adafruit_STMPE610(TOUCH_CS);
@@ -423,7 +477,7 @@ MergedStreams mergedStreams(Serial, WIFI);
 
 #ifndef CL // depends on inclusion of ILI9341_t3.h
 #define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
-#if defined(PICOWS) || defined(PICOD2) || defined(PICO)
+#if defined(PICOWS) || defined(PICOWS35)|| defined(PICOD2) || defined(PICO)
 #define writeRect(a, b, c, d, e) pushImage(a, b, c, d, e) 
 #else
 #define writeRect(a, b, c, d, e) drawRGBBitmap(a, b, e, c, d) 
@@ -431,14 +485,10 @@ MergedStreams mergedStreams(Serial, WIFI);
 #define USEADAFRUIT
 #endif
 
-#if defined(PICOD2)
-   TFT_eSPI tft = TFT_eSPI();
-  //Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RESET);
-#elif defined(PICOWS)
+#if defined(PICO) || defined(PICOWS) || defined(PICOWS35) || defined(PICOD2)
    TFT_eSPI tft = TFT_eSPI();
   //Adafruit_ST7789 tft = Adafruit_ST7789(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, TFT_RESET);
-#elif defined(PICO)
-   TFT_eSPI tft = TFT_eSPI();
+  //Adafruit_ST7789 tft = Adafruit_ST7789(&SPI, TFT_CS, TFT_DC, TFT_RESET);
   //SPIClassRP2040 spi00 = SPIClassRP2040(spi0, TFT_MOSI, TFT_CS, TFT_SCK, TFT_MISO);
   //Adafruit_ILI9341 tft = Adafruit_ILI9341(&spi00, TFT_DC);
   ////Adafruit_ILI9341 tft = Adafruit_ILI9341(TFT_CS, TFT_DC, TFT_MOSI, TFT_SCK, -1, TFT_MISO); // test SW SPI
@@ -452,6 +502,7 @@ MergedStreams mergedStreams(Serial, WIFI);
 #endif
 
 bool hasSD = false;
+bool hasWIFI = false;
 
 PS2Keyboard ps2kb;
 
@@ -586,8 +637,10 @@ int getButtonPress(bool raw)
   static unsigned int lastChange=0;
   static unsigned int autoRepeat=0;
   
-#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS)
+#ifdef TOUCH_CS
+#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS) || defined(PICOWS35)
   return getTouchPress(raw);
+#endif
 #endif
 
   int numBanks = sizeof(keys)/(numButtons*sizeof(keys[0]));
@@ -737,7 +790,8 @@ int getButtonPress(bool raw)
 
 int novaKey = 1;
 
-#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS)
+#ifdef TOUCH_CS
+#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS) || defined(PICOWS35)
 // get touch with debounce, autorepeat and long press as configured in key array
 // raw touch used for menu only
 int getTouchPress(bool raw)
@@ -766,7 +820,7 @@ int getTouchPress(bool raw)
   static int currentButtons = 0;
   if (millis()-lastTouch>200 || novaKey==2)
   { lastTouch=millis();
-#ifdef PICOWS
+#if defined(PICOWS) || defined(PICOWS35)
     if (touch.getTouch(&x, &y))
 #else  
     if (touch.touched())
@@ -786,7 +840,7 @@ int getTouchPress(bool raw)
       tft.drawLine(160, 0, 160, 239, CL(255,255,255));
       tft.drawLine(240, 0, 240, 239, CL(255,255,255));
   
-#ifdef PICOWS
+#if defined(PICOWS) || defined(PICOWS35)
       z=0;
       if (touch.getTouch(&x,&y)) z=40;
 #else
@@ -794,7 +848,7 @@ int getTouchPress(bool raw)
 #endif
       if (x && y && z>20) 
       { 
-#ifdef PICOWS
+#if defined(PICOWS) || defined(PICOWS35)
         z = (200-y)/100; if (z>1) z=1; if (z<0) z=0;
         y = (300-x)/75; if (y>3) y=3; if (y<0) y=0;
         x=z;
@@ -802,8 +856,8 @@ int getTouchPress(bool raw)
         x = (x-200)/1800; if (x>1) x=1; if (x<0) x=0;
         y = (y-200)/900; if (y>3) y=3; if (y<0) y=0;
 #endif
-      MSerial.println(x);
-      MSerial.println(y);
+      Serial.println(x);
+      Serial.println(y);
 
         x=(y+x*4);
         switch(x)
@@ -830,7 +884,7 @@ int getTouchPress(bool raw)
     }
     else
     { 
-#ifdef PICOWS
+#if defined(PICOWS) || defined(PICOWS35)
       //while (touch.getTouch(&x,&y))
 #else
       while (!touch.bufferEmpty()) touch.readData(&x,&y,&z);
@@ -926,6 +980,7 @@ int getTouchPress(bool raw)
 
   return 0;
 }
+#endif
 #endif
 
 // visual representation of the Nova
@@ -1121,7 +1176,7 @@ void showHelp() {
   tft.setTextSize(1);
   tft.setCursor(0,0);
   tft.println("");
-#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS)
+#if defined(FEATHERWING_TFT_TOUCH) || defined(PICOWS) || defined(PICOWS35)
   tft.println("                    Touch help");
 #else
   tft.println("                    Button help");
@@ -1181,7 +1236,7 @@ void showHelp() {
   tft.println(makespc(23-(l>>1))+"FUNC "+items[keyBank]);
   tft.println("");
   tft.setTextColor(CL(192,192,64));
-#if !defined(PICO) && !defined(PICOD2) && !defined(PICOWS)
+#if !defined(PICO) && !defined(PICOD2) && !defined(PICOWS) && !defined(PICOWS35)
   tft.print("Teensy Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
 #else
   tft.print("RPPico Nova1200 sim mvh; " __DATE__ "; Memory "+String(MEMSIZE)+"kW");
@@ -1253,7 +1308,10 @@ void Serialwrite(int a)
     return;
   }
 
-  MSerial.write(a);
+  Serial.write(a);
+#ifdef WIFI
+  if (hasWIFI) WIFI.write(a);
+#endif
 
   if (inCursor && a>='0' && a<='9') // collect graphics terminal number
   { val=10*val+a-'0';
@@ -1379,7 +1437,7 @@ void Serialwrite(int a)
 // Nova simulator from simhv-39
 
 // number of instructions per update of front panel (modify with speed command or button)
-static int SIMINTERVAL=973;
+static int SIMINTERVAL=014000; // nova speed
 
 // memory size; note: cannot be changed without recreating sessions in ROM and EEPROM
 
@@ -1451,28 +1509,55 @@ void continueNova(void)
   return;
 }
 
-#define HALT       063077
+// 0 11A ATT TCC 111 111
+// 0 6/7 3/7 0-3 7   7
+
 
 // System calls (these all are functional HALT instructions, interpreted by Arduino program on real Nova)
 // Unused in Teensy Nova simulator
 #define INFO       077377 // show debug information on LCD
 #define PUTC       077277 // output character to LCD and serial
 #define GETC       077177 // get character from serial (/ mode) or keypad (9-5 mode)
-#define READBLOCK  077077 // read 64 word block A0 from device (EEPROM) to address A2
+#define READBLOCK  077077 // read 64 word block A0 from device (EEPROM/SD) to address A2
+
 #define WRITEBLOCK 073377 // write 64 word block A0 to device (EEPROM) from address A2
 #define WRITELED   073277 // A0 bit 0 sets Arduino LED
 #define MESSAGE    073177 // Write text string with %0..%3 substituted for AC0..3
 #define GPIO       073077 // High bits define data direction (O=out), low bits value
+
 //#define SKIPBUSYZ  (MOV(3,3)+NOLOAD+SKP) // Always skip
+
 #define SKIPDONE   067377 // skip when character available
 #define DELAY      067277 // Delay A0 ms, showing A1 on lights
 #define ADC        067177 // Read A0 from teensy
+#define UNUSED1    067077
+
+#define GRMODE     063377 // A0 = MONO/ZOOM/CLEAR/HIGHADDRESS A1 = ADDRESS
+#define GRDISPLAY  063277 // A0 = Pixel value(count<2) or address A1=count
+#define GRNEXT     063177 
+
+#define HALT       063077
+
 // 6 are open 06[3,7][1-3]77 except 063077; maybe add 
 // HWMUL, HWDIV, DEVICESEL, SKIPBUSYZ (always skip)
 
+#include "nova_sinogram1.h"
+#include "nova_sinogram2.h"
+#include "nova_sinogram3.h"
+#include "nova_sinogram4.h"
+
+int grzoom=1;
+int graddress=0;
+int grmono=0;
+
 // execute N instruction
 void simulateNova(int N)
-{ novaLights = (
+{ int stat=0;
+  int loop=0;
+    
+  while(stat!=STOP_IBKPT && loop<1000) {
+  loop++;
+  novaLights = (
       (novaRunning?1:0)|
       (int_req & INT_ION?2:0)|
       (novaRunning?4:0)|
@@ -1480,7 +1565,7 @@ void simulateNova(int N)
       (0));
   novaCarry = (NovaC&CBIT?1:0);
   saved_PC=NovaPC;
-  int stat = sim_instr(N);
+  stat = sim_instr(N);
   NovaPC=saved_PC;
   novaAddress = saved_PC;
   novaData = examine(saved_PC);
@@ -1492,56 +1577,89 @@ void simulateNova(int N)
       (0));
   novaCarry = (NovaC&CBIT?1:0);
 
-  if (stat==2) // HALT
+  if (stat==STOP_HALT) // HALT
   { int haltAddress = saved_PC-1;
     int haltInstruction = examine(haltAddress);
     int haltA0          = examineAC(0);
+    stat = 0;
+    static int lastBlock=0;
+    static int fileoffset=0;
 
     //if (kbmode==3) haltInstruction=0; // allow key 9 to stop running
 
     if (haltInstruction==HALT)
-    { MSerial.println("HALT at address: "+toOct(haltAddress));
-      MSerial.print(">");
+    { //Serial.println("HALT at address: "+toOct(haltAddress));
+      Serial.print(">");
       stopNova();
       SerialIO=false;
       return; // Normal halt: nova ready for input
     }    
     else if (haltInstruction==INFO)
-    { //lcdPrintDebug();
+    { Serial.println("INFO address: "+toOct(haltAddress));
+      Serial.println("A0: "+toOct(haltA0)+" "+toHex(haltA0)+" "+String((signed short)haltA0));
+      int A1=examineAC(1); int A01 = (A1<<16)|haltA0; Serial.println("A1: "+toOct(A1)+" "+toHex(A1)+" "+String((signed short)A1) + " " + String(A01));
+      int A2=examineAC(2); Serial.println("A2: "+toOct(A2)+" "+toHex(A2)+" "+String((signed short)A2));
+      int A3=examineAC(3); Serial.println("A3: "+toOct(A3)+" "+toHex(A3)+" "+String((signed short)A3));
       examine(haltAddress);
       continueNova();
     }
     else if (haltInstruction==PUTC) // write character
     { byte b=haltA0&255;
-      MSerial.write(b);
+      Serial.write(b);
       //putLCD(b);
       examine(haltAddress);
       continueNova();
     }
     else if (haltInstruction==MESSAGE) // write character string from address in A2
     { int a = examineAC(2);
-      bool flag=false;
+      char byteArray[80];
       for (int i=0; i<40; i++)
       { unsigned short s=examine(a+i);
-        unsigned short s2=examine(a+i+1);
-        byte b = s>>8;
+        byteArray[i*2]=s>>8;
+        byteArray[i*2+1]=s&255;
+        if ((s>>8)==0) break;
+        if ((s&255)==0) break;
+      }
+      String str, st;
+      int v;
+      float f;
+      for (int i=0; i<79; i++)
+      { char b = byteArray[i];
+        char b2 = byteArray[i+1];
         if (b==0) break;
-        if (!flag)
-        { if (b=='%') { MSerial.print(String((short)examineAC(s&3))); flag=true; }
-          else MSerial.write(b);
-          //putLCD(b);
+        if (b==1)
+        { // ignored character
         }
-        else
-          flag=false;
-        b = s&255;
-        if (b==0) break;
-        if (!flag)
-        { if (b=='%') { MSerial.print(String((short)examineAC((s2>>8)&3))); flag=true; }
-          else MSerial.write(b);
-          //putLCD(b);
+        else if (b=='\n' || b=='\r')
+        { //Serial.println();
+          Serialwrite('\n');
+          Serialwrite('\r');
         }
-        else
-          flag=false;
+        else if (b=='%' && b2=='f') 
+        { f = ((((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0))/65536.0;
+          st = String(f);
+          //Serial.print(st);
+          for (int j; j<st.length(); j++) Serialwrite(st[j]);
+          byteArray[i+1]=1;
+        } 
+        else if (b=='%' && (b2=='l' || b2=='4'))
+        { v = (((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0);
+          st = String(v);
+          //Serial.print(st); 
+          for (int j; j<st.length(); j++) Serialwrite(st[j]);
+          byteArray[i+1]=1;
+        }
+        else if (b=='%' && (b2>='0' && b2<='3')) 
+        { v = (short)examineAC(b2&3);
+          st = String(v);
+          //Serial.print(st); 
+          for (int j; j<st.length(); j++) Serialwrite(st[j]);
+          byteArray[i+1]=1;
+        }
+        else 
+        { //Serial.write(b);
+          Serialwrite(b);
+        }
       }
       examine(haltAddress);
       continueNova();
@@ -1555,13 +1673,18 @@ void simulateNova(int N)
       digitalWrite(A4, 1);
       digitalWrite(A5, 1);
 #endif
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(PICOWS35)
+      pinMode(25, OUTPUT);
+      digitalWrite(25, (haltA0&1)!=0);
+#else
       digitalWrite(13, (haltA0&1)!=0);
+#endif
 #ifdef TEENSY
       digitalWrite(12, (haltA0&2)!=0);
       digitalWrite(11, (haltA0&4)!=0);
       analogWrite(A14, haltA0>>4);
 #endif
-#ifndef TEENSY
+#if !defined(TEENSY) && !(defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(PICOWS35))
       delay(50); // must be shorter than 100 ms above!
       digitalWrite(13, 0);
 #endif
@@ -1570,8 +1693,64 @@ void simulateNova(int N)
     }
     else if (haltInstruction==READBLOCK) // stored BIGENDIAN in eeprom
     { unsigned int A2=examineAC(2);
+      if (lastBlock != haltA0) fileoffset=0;
+      lastBlock=haltA0;
+
       //gpio(1);
       //readBlockfromEEPROM(haltA0, A2);
+
+#ifdef SD_CS
+      if (haltA0>=0xff00) // each block >=ff00 represents a complete contiguous file
+      { String filename=toOct((haltA0-0xff00));
+        myFile = SD.open(filename);
+        myFile.seek(fileoffset*128);
+        for (int i=0; i<64; i++) 
+        { int dat = (myFile.read()<<8)+myFile.read();
+          deposit(A2+i, dat);
+        }
+        myFile.close();
+        fileoffset++;
+      }
+      else
+#endif
+      if (haltA0>=0xf600)
+      { unsigned int address=(haltA0-0xf600)*64;
+        for (int i=0; i<64; i++)
+        { deposit(A2+i, nova_sinogram4[i+address]);
+        }
+      }
+      else if (haltA0>=0xf400)
+      { unsigned int address=(haltA0-0xf400)*64;
+        for (int i=0; i<64; i++)
+        { deposit(A2+i, nova_sinogram3[i+address]);
+        }
+      }
+      else if (haltA0>=0xf200)
+      { unsigned int address=(haltA0-0xf200)*64;
+        for (int i=0; i<64; i++)
+        { deposit(A2+i, nova_sinogram2[i+address]);
+        }
+      }
+      else if (haltA0>=0xf000)
+      { unsigned int address=(haltA0-0xf000)*64;
+        for (int i=0; i<64; i++)
+        { deposit(A2+i, nova_sinogram1[i+address]);
+        }
+      }
+
+#ifdef SD_CS
+      else 
+      { myFile = SD.open("data.bin");
+        if (myFile)
+        { myFile.seek(haltA0*128);
+          for (int i=0; i<64; i++) 
+          { int dat = (myFile.read()<<8)+myFile.read();
+            deposit(A2+i, dat);
+          }
+          myFile.close();
+        }
+      }
+#endif
       depositAC(0, haltA0+1);
       depositAC(2, A2+64);
       //gpio(0);
@@ -1580,11 +1759,47 @@ void simulateNova(int N)
     }
     else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
     { unsigned int A2=examineAC(2);
+      if (lastBlock != haltA0) fileoffset=0;
+      lastBlock=haltA0;
+
+#ifdef SD_CS
+      if (haltA0>=0xff00)
+      { String filename=toOct((haltA0-0xff00));
+        if (fileoffset==0) 
+          myFile = SD.open(filename, FILE_WRITE | O_TRUNC);
+        else 
+          myFile = SD.open(filename, FILE_WRITE);
+        for (int i=0; i<64; i++) 
+        { unsigned short dat = examine(A2+i);
+          myFile.write(dat>>8);
+          myFile.write(dat&255);
+        }
+        myFile.close();
+        fileoffset++;
+      }
+      else
+#endif
+
+#ifdef SD_CS
+      { myFile = SD.open("data.bin", FILE_WRITE);
+        if (myFile)
+        { myFile.seek(haltA0*128);
+          for (int i=0; i<64; i++) 
+          { unsigned short dat = examine(A2+i);
+            myFile.write(dat>>8);
+            myFile.write(dat&255);
+          }
+          myFile.close();
+        }
+      }
+#endif
+
       //gpio(4);
       //writeBlocktoEEPROM(haltA0, A2);
       //gpio(0);
       depositAC(0, haltA0+1);
       depositAC(2, A2+64);
+
       examine(haltAddress);
       continueNova();
     }
@@ -1614,6 +1829,67 @@ void simulateNova(int N)
     else if (haltInstruction==GETC)
     { //break; // handled in serial and keyboard code
     }
+    else if (haltInstruction==GRMODE)
+    { int mode = examineAC(0);
+      graddress = ((mode&1)<<16)+examineAC(1);
+      grzoom = (mode&0x1e)>>1;
+      int grclear = (mode&0x20);
+      grmono = (mode&0xffc0)>>6;
+      if (grclear) 
+#ifdef PICOWS35
+        tft.fillRect(0, 240, 320, 240, ILI9341_BLACK);
+#else
+        tft.fillRect(0, 0, 320, 240-93, ILI9341_BLACK);
+#endif
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==GRDISPLAY)
+    { int val = examineAC(0);
+      int rep = examineAC(1);
+      if (rep==0) rep=1;
+      int addr= val;
+      for (int i=0; i<rep; i++)
+      { if (rep>1)
+        { val = examine(addr+i);
+        }
+        if (grmono)
+        { if (val>32767) val = val-65536;
+          val = val / grmono;
+          if (val<0) val=0;
+          if (val>255) val=255;
+          val = CL(val, val, val);
+        }
+#ifdef PICOWS35
+        tft.fillRect(graddress%320, 240+(graddress/320), grzoom, grzoom, val);
+#else
+        tft.fillRect(graddress%320, 0+(graddress/320), grzoom, grzoom, val);
+#endif
+        graddress += grzoom;
+        if((graddress%320)<grzoom) graddress = (graddress/320 + grzoom-1) * 320;
+#ifdef PICOWS35
+        if (graddress>240*320) graddress=0;
+#else
+        if (graddress>(240-93)*320) graddress=0;
+#endif
+      }
+      if (rep>1) depositAC(0, addr+rep);
+      examine(haltAddress);
+      continueNova();
+    }
+    else if (haltInstruction==GRNEXT)
+    { while(1)
+      { graddress += grzoom;
+        if((graddress%320)<grzoom) 
+        { graddress = (graddress/320 + grzoom-1) * 320;
+          break;
+        }
+      }
+      if (graddress>240*320) graddress=0;
+      examine(haltAddress);
+      continueNova();
+    }
+  }
   }
 }
 
@@ -1642,7 +1918,7 @@ void resetNova(void)
   saved_PC=0;
   reset_all(0);
   //int_req = 03000000;
-  MSerial.println("Reset");
+  Serial.println("Reset");
   novaLights =
     (novaRunning?1:0)|
     (int_req & INT_ION?2:0)|
@@ -1695,6 +1971,7 @@ unsigned int readHex(char *buf, byte n)
 // read octal string in buffer
 unsigned int readOct(String s, int pos)
 { unsigned int r=0;
+  if (pos<0) return 0;
   for (unsigned int i=pos; i<s.length(); i++)
   { if (s[i]<'0' || s[i]>'7') break;
     r = r<<3;
@@ -1803,6 +2080,9 @@ String printDisas(unsigned int v, int octalmode) {
 //  else if (v==SKIPBUSYZ)        s+=(".SKIPBUSYZ");
   else if (v==DELAY)            s+=(".DELAY");
   else if (v==ADC)              s+=(".ADC");
+  else if (v==GRMODE)           s+=(".GRMODE");
+  else if (v==GRDISPLAY)        s+=(".GRDISPLAY");
+  else if (v==GRNEXT)           s+=(".GRNEXT");
   else if (v==HALT)             s+=("HALT");    //doc0, 4 bits free
   else if ((v&0xe73f)==0x663f)  s+=(".HALT");   // unused system call
 
@@ -1867,26 +2147,26 @@ void serialDebug(int mode) {
   a2=examineAC(2);
   a3=examineAC(3);
   if (mode&1)
-  { MSerial.print("ac0:");
-    MSerial.print(toOct(a0));
-    MSerial.print(" 1:");
-    MSerial.print(toOct(a1));
-    MSerial.print(" 2:");
-    MSerial.print(toOct(a2));
-    MSerial.print(" 3:");
-    MSerial.print(toOct(a3));
-    MSerial.print(" ");
+  { Serial.print("ac0:");
+    Serial.print(toOct(a0));
+    Serial.print(" 1:");
+    Serial.print(toOct(a1));
+    Serial.print(" 2:");
+    Serial.print(toOct(a2));
+    Serial.print(" 3:");
+    Serial.print(toOct(a3));
+    Serial.print(" ");
 
     if (carry)
-      MSerial.println("C");
+      Serial.println("C");
     else
-      MSerial.println(".");
+      Serial.println(".");
   }
 
   if (mode&2)
   { in = examine(pc);
-    MSerial.print(toOct(pc));    // print address
-    MSerial.print(printDisas(in, OCT));    // disassemble instruction
+    Serial.print(toOct(pc));    // print address
+    Serial.print(printDisas(in, OCT));    // disassemble instruction
   
     int mref = (in>>11)&0x1f;
     int b=(in&0x700)>>8;
@@ -1909,9 +2189,9 @@ void serialDebug(int mode) {
       }
   
       if (b>3) indirect++;
-      MSerial.print(" ");
-      if (b>3) MSerial.print("@");
-      if (b>0) MSerial.print(toOct(t));
+      Serial.print(" ");
+      if (b>3) Serial.print("@");
+      if (b>0) Serial.print(toOct(t));
   
       for (int i=0; i<indirect; i++)
       { if (b>3) do t=examine(t); while (t&0x8000);
@@ -1919,20 +2199,92 @@ void serialDebug(int mode) {
       }
            
       if (indirect)
-      { MSerial.print("->");
-        MSerial.print(toOct(t));
+      { Serial.print("->");
+        Serial.print(toOct(t));
       }
     }
   }
   examine(pc);
 }
 
+// mini debugger display on serial interface
+#ifdef WIFI
+void WIFIDebug(int mode) {
+  unsigned int pc = NovaPC;
+  unsigned int carry = NovaC!=0;
+  unsigned int in = NovaMem[NovaPC], a0, a1, a2=0, a3=0;
+  a0=examineAC(0);
+  a1=examineAC(1);
+  a2=examineAC(2);
+  a3=examineAC(3);
+  if (mode&1)
+  { WIFI.print("ac0:");
+    WIFI.print(toOct(a0));
+    WIFI.print(" 1:");
+    WIFI.print(toOct(a1));
+    WIFI.print(" 2:");
+    WIFI.print(toOct(a2));
+    WIFI.print(" 3:");
+    WIFI.print(toOct(a3));
+    WIFI.print(" ");
+
+    if (carry)
+      WIFI.println("C");
+    else
+      WIFI.println(".");
+  }
+
+  if (mode&2)
+  { in = examine(pc);
+    WIFI.print(toOct(pc));    // print address
+    WIFI.print(printDisas(in, OCT));    // disassemble instruction
+  
+    int mref = (in>>11)&0x1f;
+    int b=(in&0x700)>>8;
+    int dest=in&0xff;
+    bool target=false;
+    int indirect=0;
+    unsigned int t=0;
+  
+    if      (mref<=1)        { target = true; } // jmp, jms
+    else if (mref<=3)        { target = true; indirect=1; } // isz, dsz
+    else if ((mref&0x1c)==4) { target = true; indirect=1; } // lda
+    else if ((mref&0x1c)==8) { target = true; } // sta
+  
+    if (target)
+    { switch(b)
+      { case 1: case 5: if (dest&0x80) t = pc-(128-(dest&127)); else t=pc+dest; break;
+        case 2: case 6: if (dest&0x80) t = a2-(128-(dest&127)); else t=a2+dest; break;
+        case 3: case 7: if (dest&0x80) t = a3-(128-(dest&127)); else t=a3+dest; break;
+        case 0: case 4: t=dest; break;     
+      }
+  
+      if (b>3) indirect++;
+      WIFI.print(" ");
+      if (b>3) WIFI.print("@");
+      if (b>0) WIFI.print(toOct(t));
+  
+      for (int i=0; i<indirect; i++)
+      { if (b>3) do t=examine(t); while (t&0x8000);
+        else t=examine(t);
+      }
+           
+      if (indirect)
+      { WIFI.print("->");
+        WIFI.print(toOct(t));
+      }
+    }
+  }
+  examine(pc);
+}
+#endif
+
 // Array with contents of punched tape; there is space for several tapes
 #include "novabasic1.tape.h"
 #include "sos_xbasic.tape.h"
 
 String tapeloader(const unsigned char*p, int len, String name)
-{  MSerial.println("Loading 'tape' from code memory: "+name);
+{  Serial.println("Loading 'tape' from code memory: "+name);
    //Serial.println("Block:Address");
    int i=0, startaddress=0xffff;
    i=0;
@@ -1950,7 +2302,7 @@ String tapeloader(const unsigned char*p, int len, String name)
      // data block
      if (wc>0 && wc<=16)
      { short adr = p[i] + p[i+1]*256;
-       MSerial.println(toOct(wc)+':'+toOct(adr));
+       Serial.println(toOct(wc)+':'+toOct(adr));
        i+=2;
        //short cs = p[i] + p[i+1]*256;
        i+=2;
@@ -1963,7 +2315,7 @@ String tapeloader(const unsigned char*p, int len, String name)
      // constant block
      else if (wc>16 && wc <= 32767)
      { short adr = p[i] + p[i+1]*256;
-       MSerial.println(toOct(wc)+' '+toOct(adr));
+       Serial.println(toOct(wc)+' '+toOct(adr));
        i+=2;
        //short cs = p[i] + p[i+1]*256;
        i+=2;
@@ -1985,7 +2337,7 @@ String tapeloader(const unsigned char*p, int len, String name)
    }
 
    if (startaddress<32768) 
-   { MSerial.println("start adress "+toOct(startaddress));
+   { Serial.println("start adress "+toOct(startaddress));
      return "run "+toOct(startaddress);
    }
 
@@ -2017,7 +2369,7 @@ void unload(const unsigned short *p, int eeprom, int base)
   int ndiff=0;
   int id = micros()&0xffff;
   if (eeprom) id=eeprom;
-  if (!eeprom) MSerial.println(String(id) + "," + String(base) + ",");
+  if (!eeprom) Serial.println(String(id) + "," + String(base) + ",");
   ADD_DIFF(id);
   ADD_DIFF(base);
 
@@ -2030,19 +2382,19 @@ void unload(const unsigned short *p, int eeprom, int base)
     else 
     { if (countsame > 3 || i==MEMSIZE)
       { if (length)
-        { if (!eeprom) MSerial.print(String(block) + "," + String(length) + ",");
+        { if (!eeprom) Serial.print(String(block) + "," + String(length) + ",");
           ADD_DIFF(block);
           ADD_DIFF(length);
           for (int j=0; j<length; j++) 
           { unsigned short v=examine(block+j);
             if (p) v = (p[block+j]-v)&0xffff;
-            if (!eeprom) MSerial.print(String(v)); 
+            if (!eeprom) Serial.print(String(v)); 
             ADD_DIFF(v);
-            if (!eeprom) MSerial.print(","); 
+            if (!eeprom) Serial.print(","); 
           }
-          if (!eeprom) MSerial.println();
+          if (!eeprom) Serial.println();
         }
-        if (!eeprom) MSerial.println(String(block+length+32768) + "," + String(countsame) + "," + String(startval) + ",");
+        if (!eeprom) Serial.println(String(block+length+32768) + "," + String(countsame) + "," + String(startval) + ",");
         ADD_DIFF(block+length+32768);
         ADD_DIFF(countsame);
         ADD_DIFF(startval);
@@ -2056,28 +2408,28 @@ void unload(const unsigned short *p, int eeprom, int base)
     }
 
     if (length>=12 || (i==MEMSIZE && length>0))
-    { if (!eeprom) MSerial.print(String(block) + "," + String(length) + ",");
+    { if (!eeprom) Serial.print(String(block) + "," + String(length) + ",");
       ADD_DIFF(block);
       ADD_DIFF(length);
       for (int j=0; j<length; j++) 
       { unsigned short v=examine(block+j);
         if (p) v = (p[block+j]-v)&0xffff;
-        if (!eeprom) MSerial.print(String(v)); 
+        if (!eeprom) Serial.print(String(v)); 
         ADD_DIFF(v);
-        if (!eeprom) MSerial.print(","); 
+        if (!eeprom) Serial.print(","); 
       }
-      if (!eeprom) MSerial.println();
+      if (!eeprom) Serial.println();
       block=i;
       length=0;
       startval=v;
     }
     if (!eeprom) 
-      while (!MSerial.availableForWrite()) delay(10);
+      while (!Serial.availableForWrite()) delay(10);
   }
   
-  MSerial.println("Length (words): " + String(ndiff));
+  Serial.println("Length (words): " + String(ndiff));
   if (eeprom && ndiff>=eepromwords) 
-  { MSerial.println("Session does not fit in eeprom; not stored");
+  { Serial.println("Session does not fit in eeprom; not stored");
     tft.setCursor(0,0);
     tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
     tft.println("** Session does not fit in eeprom; not stored **");
@@ -2097,7 +2449,7 @@ void unload(const unsigned short *p, int eeprom, int base)
     }
     myFile.close();
 
-    MSerial.println("Used SD(of "+String(eepromwords*2)+"): " + String(ndiff*2));
+    Serial.println("Used SD(of "+String(eepromwords*2)+"): " + String(ndiff*2));
     tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
     tft.setTextSize(2);
     tft.setCursor(0,0);
@@ -2118,7 +2470,7 @@ void unload(const unsigned short *p, int eeprom, int base)
     unsigned short s=ndiff;
     EEPROM.write(38, s>>8);
     EEPROM.write(39, s&255);
-    MSerial.println("Used eeprom(of "+String(eepromwords*2)+"): " + String(ndiff*2));
+    Serial.println("Used eeprom(of "+String(eepromwords*2)+"): " + String(ndiff*2));
     tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
     tft.setTextSize(2);
     tft.setCursor(0,0);
@@ -2135,11 +2487,11 @@ void unload(const unsigned short *p, int eeprom, int base)
 
 // Load session data or difference
 int sessionloader(const unsigned short *p, int len, String name, int base)
-{  MSerial.println("Loading session: "+name);
+{  Serial.println("Loading session: "+name);
    int i=2; // skip ID and base
    
    if (base != p[1])
-   { MSerial.print("*** Error session difference with wrong base ***");
+   { Serial.print("*** Error session difference with wrong base ***");
      tft.setCursor(0,0);
      tft.print("*** Error session difference with wrong base ***");
          delay (5000);
@@ -2147,7 +2499,7 @@ int sessionloader(const unsigned short *p, int len, String name, int base)
    }
 
    if (len<=0)
-   { MSerial.print("*** Error loading unknown session ***");
+   { Serial.print("*** Error loading unknown session ***");
      tft.setCursor(0,0);
      tft.print("*** Error loading unknown session ***");
          delay (5000);
@@ -2162,7 +2514,7 @@ int sessionloader(const unsigned short *p, int len, String name, int base)
      { unsigned short adr = a;
        unsigned short wc = p[i++];
        
-       //MSerial.println(toOct(wc)+':'+toOct(adr));
+       //Serial.println(toOct(wc)+':'+toOct(adr));
        for (int j=0; j<wc; j++)
        { unsigned short data = p[i++];
          if (base) data += examine(adr+j);
@@ -2173,7 +2525,7 @@ int sessionloader(const unsigned short *p, int len, String name, int base)
      else if (a&32768)
      { unsigned short adr = a & 0x7fff;
        unsigned short wc = p[i++];
-       //MSerial.println(toOct(wc)+' '+toOct(adr));
+       //Serial.println(toOct(wc)+' '+toOct(adr));
        unsigned short data = p[i++];
        for (int j=0; j<wc; j++)
        { unsigned short d=data;
@@ -2195,6 +2547,8 @@ int sessionloader(const unsigned short *p, int len, String name, int base)
 #include "basic.session.h"
 #include "basic.code.h"
 #include "basic.pong.h"
+#include "recondemo.h"
+#include "bshr_demo.h"
 
 int sessionID=0, rootID=0; // current session except EEPROM changes, session root
 
@@ -2204,6 +2558,8 @@ int getSessionLength(int id)
 { if (id==basicsession[0]) return sizeof(basicsession)/2;
   if (id==basiccode[0]) return sizeof(basiccode)/2;
   if (id==basicpong[0]) return sizeof(basicpong)/2;
+  if (id==recondemo[0]) return sizeof(recondemo)/2;
+  if (id==bshr_demo[0]) return sizeof(bshr_demo)/2;
 #ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
@@ -2225,6 +2581,8 @@ int getSessionBase(int id)
 { if (id==basicsession[0]) return basicsession[1];
   if (id==basiccode[0]) return basiccode[1];
   if (id==basicpong[0]) return basicpong[1];
+  if (id==recondemo[0]) return recondemo[1];
+  if (id==bshr_demo[0]) return bshr_demo[1];
 #ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
@@ -2251,6 +2609,8 @@ const unsigned short *getSessionAddress(int id)
   if (id==basicsession[0]) return basicsession;
   if (id==basiccode[0]) return basiccode;
   if (id==basicpong[0]) return basicpong;
+  if (id==recondemo[0]) return recondemo;
+  if (id==bshr_demo[0]) return bshr_demo;
 #ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
@@ -2286,6 +2646,8 @@ int getSessionID(String name)
   if (name==".BASICSAMPLE") return basiccode[0];
   if (name==".PONG") return basicpong[0];
   if (name==".BASICPONG") return basicpong[0];
+  if (name==".RECONDEMO") return recondemo[0];
+  if (name==".BSHR") return bshr_demo[0];
 #ifdef SD_CS
   if (hasSD && name==".SD")
   { myFile = SD.open("tnses1.bin");
@@ -2295,11 +2657,16 @@ int getSessionID(String name)
       myFile.read();
       int idf = (myFile.read()<<8)+myFile.read();
       myFile.close();
+      if (idf==0) idf=-1;
       return idf;
     }
   }
 #endif
-  if (name==".EEPROM") return (EEPROM.read(56)<<8)+EEPROM.read(57);
+  if (name==".EEPROM") 
+  { int idf = (EEPROM.read(56)<<8)+EEPROM.read(57);
+    if (idf==0) idf=-1;
+      return idf;
+  }
   if (name.toInt()) return name.toInt();
   return -1;
 }
@@ -2309,6 +2676,8 @@ String getSessionName(int id)
 { if (id==basicsession[0] || id==-1) return ".BASICSESSION";
   if (id==basiccode[0]    || id==-2) return ".BASICSAMPLE";
   if (id==basicpong[0]    || id==-3) return ".BASICPONG";
+  if (id==recondemo[0]    || id==-4) return ".RECONDEMO";
+  if (id==bshr_demo[0]    || id==-4) return ".BSHR";
 #ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
@@ -2318,7 +2687,7 @@ String getSessionName(int id)
       myFile.read();
       int idf = (myFile.read()<<8)+myFile.read();
       myFile.close();
-      if (id==idf || id==-4) return ".SD";
+      if (id==idf || id==-5) return ".SD";
     }
   }
 #endif
@@ -2332,7 +2701,7 @@ int restoreSession(String name)
   ids[0] = getSessionID(name); // last level
 
   if (ids[0]<=0)
-  { MSerial.println("** No session found **");     
+  { Serial.println("** No session found **");     
     tft.println("** No session found **");
     return 0;
   }
@@ -2359,7 +2728,7 @@ int restoreSession(String name)
   }
 
   if (id==0)
-  { MSerial.println("** No session found **");     
+  { Serial.println("** No session found **");     
     tft.println("** No session found **");
     delay(5000);
   }
@@ -2392,18 +2761,18 @@ void unloadDiffToEEPROM()
 // print difference with given session as code that can be embedded
 void unloadDiffCode(String name)
 { if (name==".EEPROM") 
-  { MSerial.println("** cannot use EEPROM as base **");
+  { Serial.println("** cannot use EEPROM as base **");
     return;
   }
   if (name==".SD") 
-  { MSerial.println("** cannot use SD as base **");
+  { Serial.println("** cannot use SD as base **");
     return;
   }
   unsigned short *q=(unsigned short *)malloc(MEMSIZE*2);
   memcpy(q, NovaMem, MEMSIZE*2);
   int id=restoreSession(name);
   if (id==0)
-  { MSerial.println("** cannot find session **");
+  { Serial.println("** cannot find session **");
     return;
   }
   unload(q, 0, id); // prints difference as code
@@ -2416,14 +2785,146 @@ void storeSession(void)
 { unloadDiffToEEPROM();
 }
 
+#pragma pack(1)
+typedef struct  {
+        char  bfType1;    /* Must be 'B' */
+        char  bfType2;    /* Must be 'M' */
+        long  bfSize;     /* Size of the file */
+        short bfReserved1;  /* Must be 0 */
+        short bfReserved2;  /* Must be 0 */
+        long  bfOffBits;    /* Offset of the ImageBits */
+
+    long  biSize;     /* size of all biXX (40) */
+    long  biWidth;
+    long  biHeight;
+    short biPlanes;
+    short biBitCount;
+    long  biCompression;
+    long  biSizeImage;
+    long  biXPelsPerMeter;
+    long  biYPelsPerMeter;
+    long  biClrUsed;
+    long  biClrImportant;
+} BMP_HEADER;     /* 24BITS */
+#pragma pack()
+
+void write_bmp(int rows, int cols, String filename)
+{ BMP_HEADER bmp;
+  uint16_t *buf = (uint16_t*) malloc(cols * 2);
+  
+  memset((void*)&bmp, 0, sizeof(BMP_HEADER));
+  bmp.bfType1 = 'B';
+  bmp.bfType2 = 'M';
+  bmp.bfSize = rows*cols*3 + sizeof(BMP_HEADER);
+  bmp.bfOffBits = sizeof(BMP_HEADER);
+
+  bmp.biSize = 40;
+  bmp.biWidth = cols;
+  bmp.biHeight = rows;
+  bmp.biPlanes = 1;
+  bmp.biBitCount = 24;
+  bmp.biSizeImage = rows*cols*3;
+  bmp.biXPelsPerMeter = 0x0ece;
+  bmp.biYPelsPerMeter = 0x0ece;
+
+  /* Write the file */
+  File f = SD.open(filename, FILE_WRITE | O_TRUNC);
+  if (f)
+  { for (int i=0; i<sizeof(bmp); i++)
+      f.write(((byte *)&bmp)[i]);
+
+    for (int i=rows-1; i>=0; i--)
+    { tft.readRect(0, i, cols, 1, buf); 
+      for (int j=0; j<cols; j++)
+      { byte bgr[3];
+        bgr[0] = (buf[j]&31)<<3;
+        bgr[1] = (buf[j]&(63<<5))>>3;
+        bgr[2] = (buf[j]&(31<<11))>>8;
+        f.write(bgr[0]);
+        f.write(bgr[1]);
+        f.write(bgr[2]);
+      }
+    }
+    f.close();
+  }
+  free((void *)buf);
+}
+
+void write_raw(int A, int N, String filename)
+{ File f = SD.open(filename, FILE_WRITE | O_TRUNC);
+  if (f)
+  { for (int i=0; i<N; i++)
+    { uint16_t v = examine(A+i);
+      f.write(v>>8);
+      f.write(v&255);
+    }
+    f.close();
+  }
+}
+
+void read_raw(int A, int N, String filename)
+{ File f = SD.open(filename, FILE_READ);
+  if (f)
+  { for (int i=0; i<N; i++)
+    { int dat = (f.read()<<8)+f.read();
+      deposit(A+i, dat);
+    }
+    f.close();
+  }
+}
+
+// help to interpret commands that affect behavior of menu() below
+
+String choiceinfo(String line)
+{ if (line.startsWith("range "))
+  { int pos1 = 6;
+    unsigned short a = readOct(line, pos1);
+    String s = String(examine(a));
+    s = s + String("      ").substring(0, 6-s.length());
+    return s;
+  }
+
+  return "";
+}
+
+int choiceaddress(String line)
+{ if (line.startsWith("range "))
+  { int pos1 = 6;
+    unsigned short a = readOct(line, pos1);
+    return a;
+  }
+
+  return 0;
+}
+
+int choicelimit(String line)
+{ if (line.startsWith("range "))
+  { int pos1 = 6;
+    int pos2 = line.indexOf(' ', pos1+1);
+    unsigned short a = readOct(line, pos2+1);
+    return a;
+  }
+
+  return 1;
+}
+
 // Use whole screen for menu lines, returns choice, optionally injects as serial data
+// Can also be used to configure parameters, use e.g. "name %i:range 2001 10", couples name to 2001 range 0..7
+
 int menu(String info, String menuString, int ch, bool inject)
 { tft.fillScreen(ILI9341_RED);
   tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
   int offs=0;
+  int rangemode=0;
+  int maxchoice=10;
 #ifdef FEATHERWING_TFT_TOUCH
   offs=10;
 #endif  
+
+#ifdef PICOWS35
+  maxchoice=20;
+  while(!ss.digitalRead(SS_SWITCH));  
+#else
   tft.setCursor(230, 200+offs);
   tft.print("X X");
   tft.setCursor(230, 220+offs);
@@ -2432,53 +2933,113 @@ int menu(String info, String menuString, int ch, bool inject)
   tft.print("U cancel");
   tft.setCursor(270, 230);
   tft.print("D select");
+#endif
 
   tft.setTextSize(2);
-  int pos;
+  int pos, pos2;
   int choice=max(ch,0);
   tft.setCursor(20, 10);
   tft.print(info);
+  
+  String cmd;
+  int    adr = 0;
+  int    limit = 1;
+
   while(true)
   { int N=0;
     int col=30;
-    String text="";
     String s = menuString;
+    String text="";
+    String script="";
+    String inf="";
     while((pos=s.indexOf("\n"))>=0)
-    { tft.setCursor(col, 30+20*(N%10));
-      if (N==choice) 
-      { tft.print(">");
-        text = s.substring(0, pos);
+    { text   = s.substring(0, pos);
+      script = text;
+
+      if (N==choice)
+      { if (rangemode) 
+          text="#"+text; 
+        else 
+          text=">"+text;
       }
-      else
-        tft.print(" ");
-      tft.print(s.substring(0, pos));
+      else 
+        text=" "+text;
+
+      pos2 = script.indexOf(':');
+      if (pos2>0) 
+      { script = script.substring(pos2+1);
+        text   = text.substring(0, pos2+1);
+        pos2 = text.indexOf("%i");
+        if (pos2>0)
+        { inf = choiceinfo(script);
+          text= text.substring(0, pos2) + inf + text.substring(pos2+2);
+        }
+      }
+      tft.setCursor(col, 30+20*(N%maxchoice));
+      tft.print(text);
       s.remove(0, pos+1);
+
+      if (N==choice) 
+      { cmd   = script;
+        adr   = choiceaddress(script);
+        limit = choicelimit(script);
+      }
+
       N++;
-      if (N%10==0) col=col+30;
+      if (N%maxchoice==0) col=col+30;
     }
 	
     int k=getButtonPress(true);
-	if (ps2kb.available())
-	{ k=ps2kb.read();
+  	if (ps2kb.available())
+  	{ k=ps2kb.read();
       switch(k)
-	  { case PS2_PAGEUP: k=3; break;
-	    case PS2_PAGEDOWN: k=4; break;
-		case PS2_UPARROW: k=5; break;
-		case PS2_DOWNARROW: k=7; break;
-		case 13: k=8; break;
-		case 27: k=6; break;
-		default: k=0;
-	  }
-	}
+  	  { case PS2_PAGEUP: k=3; break;
+  	    case PS2_PAGEDOWN: k=4; break;
+    		case PS2_UPARROW: k=5; break;
+    		case PS2_DOWNARROW: k=7; break;
+    		case 13: k=8; break;
+    		case 27: k=6; break;
+    		default: k=0;
+  	  }
+  	}
+
+#ifdef PICOWS35
+    if (! ss.digitalRead(SS_SWITCH)) {
+      while(!ss.digitalRead(SS_SWITCH));
+      if      (adr && !rangemode) rangemode=1;
+      else if (adr && rangemode)  rangemode=0;
+      else                        k=8;
+    }
 	
+    int32_t new_position = ss.getEncoderPosition();
+    if (rangemode)
+    { if (encoder_position > new_position) deposit(adr, (examine(adr)+1)%limit);
+      if (encoder_position < new_position) deposit(adr, (examine(adr)-1)%limit);
+    }
+    else
+    { if (encoder_position > new_position) k=7;
+      if (encoder_position < new_position) k=5;
+    }
+    encoder_position = new_position;
+#endif
+
     tft.setTextColor(ILI9341_WHITE, ILI9341_RED);
-    if (k==8) 
+    if (k==8 && cmd.startsWith("cancel")) k=6;
+    if (k==8 && cmd.startsWith("back")) k=6;
+    if (k==8 && cmd.startsWith("stop")) { stopNova(); k=6; }
+    else if (k==8)
     { tft.fillScreen(ILI9341_BLACK);
       tft.setTextSize(1);
       if (helpScreen>=0) showHelp(); else restoreText(true);
       keySel=-99;
-      if (inject && text.length()==1) injectSerial(text);
-      if (inject && text.length()>1) injectSerial(text + "\r");
+      if (novaRunning)
+      { if (inject && cmd.length()==1) injectSerial(cmd);
+        if (inject && cmd.length()>1) injectSerial(cmd + "\r");
+      }
+      else {
+        interpret(cmd, NovaPC, Serial);
+        updateImage();
+      }
       return choice;
     }
     if (k==6) 
@@ -2488,10 +3049,10 @@ int menu(String info, String menuString, int ch, bool inject)
       keySel=-99;
       return -1;
     }
-    if (k==5) choice=(choice+10*N-1) % N;
-    if (k==7) choice=(choice+10*N+1) % N;
-    if (k==3) choice=(choice+10*N-10) % N;
-    if (k==4) choice=(choice+10*N+10) % N;
+    if (k==5) choice=(choice+maxchoice*N-1) % N;
+    if (k==7) choice=(choice+maxchoice*N+1) % N;
+    if (k==3) choice=(choice+maxchoice*N-maxchoice) % N;
+    if (k==4) choice=(choice+maxchoice*N+maxchoice) % N;
     delay(10);
   }
   return 0;
@@ -2605,9 +3166,6 @@ int steppinghelp=0;
 // process button choices
 void processButton(int but)
 { static int t=0;
-  static int ch1=0;
-  static int ch2=0;
-  static int ch3=0;
 
   // buttons 3-8 toggle help if power off
   if (but && novaKey<2)
@@ -2668,7 +3226,7 @@ void processButton(int but)
 
   // long push program load stores session modifies to eeprom
   if (but==20) { novaButton=19; storeSession(); 
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
                  EEPROM.commit(); 
 #endif
                }
@@ -2679,7 +3237,8 @@ void processButton(int but)
     Serialwrite(-1); 
   }
   if (but==22) 
-  { ch2=keyboard("Keyboard", "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ  ,\\ =+-*/^<>: ;@[]()\"\'?\x11_!#$%&\x01\x1b\r", ch2); 
+  { static int choice=1;
+    choice=keyboard("Keyboard", "1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ  ,\\ =+-*/^<>: ;@[]()\"\'?\x11_!#$%&\x01\x1b\r", choice); 
   }
   if (but==23) { if (SIMINTERVAL>9000) SIMINTERVAL=1; //set speed
                  else if (SIMINTERVAL<2) SIMINTERVAL=31; 
@@ -2690,9 +3249,16 @@ void processButton(int but)
   if (but==24) 
   { Serialwrite(-1); 
     if (novaRunning)
-      ch1=menu("Run - Basic commands", "\x1bLIST\n\x1bRUN\n\x1b\n", ch1, true);
-    else
-      ch3=menu("Stop - Monitor commands", "tape .basic\nsession .basic\nsession .pong\nsession .basicsample\nautostart\nrestore\nstore\nclear 0 77777\nabout\n", ch3, true);
+    { static int choice=1;
+      if(getSessionName(rootID)==".BASICSESSION") 
+        choice=menu("Run - Basic commands", "\x1bLIST\n\x1bRUN\n\x1b\n", choice, true);
+       else
+         stopNova();
+    }
+    else 
+    { static int choice=1;
+      choice=menu("Stop - Monitor commands", "tape .basic\nsession .basic\nsession .pong\nsession .basicsample\nsession .recondemo\nautostart\nrestore\nstore\nabout\n", choice, true);
+    }
   }
 
   // increment data switches one button per octet
@@ -2739,7 +3305,7 @@ void processButton(int but)
                  reset_all(0);
                  SIMINTERVAL=973; // default
                  
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS) && !defined(PICOWS35)
                  // flash lights when EEPROM read/write
                  if (novaKey==2) 
                  { analogWrite(14, 100); 
@@ -2789,7 +3355,7 @@ void processButton(int but)
                  { EEPROM.put(0, novaSwitches); 
                    if (EEPROM.read(40)==0) storeSession();
                    novaSwitches=0; 
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
                     EEPROM.commit(); 
 #endif
                  };
@@ -2801,7 +3367,7 @@ void processButton(int but)
 
                  delay(300); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS) && !defined(PICOWS35)
                  // Dim green light when ON
                  if (novaKey==2) 
                    analogWrite(14, 3); 
@@ -2850,6 +3416,7 @@ String("Kaddr/val             write memory location(s)\r\n")+
 String("val                   write next\r\n")+
 String("K                     stop write mode\r\n")+
 String("dump address[ length] dump memory\r\n")+
+String("dump10 address[ length] dump memory in decimal without addresses\r\n")+
 String("list address[ length] list assembly (numbers are octal)\r\n")+
 String("asm addr INST         assemble to memory (slow, INST exactly as disassembled)\r\n")+
 String("go addr               run at memory location\r\n")+
@@ -2872,6 +3439,9 @@ String("store                 store session difference to eeprom\r\n")+
 String("restore               restore session and difference from eeprom\r\n")+
 String("unload                print session as numbers to be embedded in code\r\n")+
 String("unloaddiff filename   print difference to session as numbers to be embedded in code\r\n")+
+String("writeraw ad cnt fname Write memory block to SD card\r\n")+
+String("readraw ad cnt fname  Read memory block to SD card\r\n")+
+String("screendump fname      Write LCD screen to bitmap on SD card\r\n")+
 //String("test n                run test function\r\n")+
 String("version               print version\r\n")+
 String("about                 print version on TFT\r\n")+
@@ -2884,7 +3454,7 @@ String("readk                 read key\r\n")+
 String("writed N              write data (without NOVA)\r\n")+
 String("writea N              write address (without NOVA)\r\n")+
 String("writel N              write lights (without NOVA)\r\n")+
-//String("eeprom block          hex dump eeprom block to output\r\n")+
+String("eeprom block          hex dump eeprom block to output\r\n")+
 String("memory address        hex dump memory block to output\r\n")+
 String("plot address range    plot 80 values (+/- range)\r\n")+
 String("vis address count     visualize memory as gray scale, default 1600 chars\r\n")+
@@ -2893,7 +3463,7 @@ String("wifi SSID|password|forget set WIFI identification or forget it\r\n")+
 #endif
 String("init                  init Arduino supervisor\r\n")+
 String(":nnaaaa[hhhh]         Deposit nn memory locations (a and h hex)\r\n")+
-//String(";naaaa[hh*16]         Write line n in eeprom block (a and h hex)\r\n")+
+String(";naaaa[hh*16]         Write line n in eeprom block (a and h hex)\r\n")+
 String("? $                   Write in hex ?lights ADSS $regs 1234pC\r\n")+
 //String("~                     Switch to non-interactive mode\r\n")+
 String("help                  Show this text\r\n")+
@@ -2907,18 +3477,51 @@ String history[NHISTORY];
 int nhist=0;
 bool kmode=false;
 int kaddress=0;
-char ssid[18];
-char password[18];
-bool innewline=false;
 
 // support to inject 'serial' data from code or buttons
 String injectSerialText="";
 int injectSerialDelay=0;
 
 byte Serialread()
-{ if (MSerial.available())
-    return MSerial.read();
- 
+{ if (Serial.available())
+    return Serial.read();
+  
+#ifdef WIFI
+  if (WIFI && WIFI.available())
+  { hasWIFI = true;
+    byte b = WIFI.read();
+//Serial.print('#');
+//Serial.println(b);
+//delay(50);
+
+    if (b==255)
+    { while(!WIFI.available());
+      int c=WIFI.read();
+      while(!WIFI.available());
+      int v=WIFI.read();
+
+      if (c==253) c=252;
+      else if (c==251) c=254;
+
+      WIFI.write(255);
+      WIFI.write(c);
+      WIFI.write(v);
+//Serial.println(c);
+//Serial.println(v);
+      while(!WIFI.available());
+      b = WIFI.read();
+//Serial.println(v);
+      return b;
+    }
+    else if (b==13)
+    { while(!WIFI.available());
+      WIFI.read();
+    }
+    else
+      return b;
+  }
+#endif
+  
   if (injectSerialText.length())
   { byte b = injectSerialText.charAt(0);
     injectSerialText.remove(0, 1);
@@ -2937,7 +3540,12 @@ void injectSerial(String s)
 }
 
 void about(void)
-{ tft.fillScreen(ILI9341_BLACK);
+{ 
+#ifdef PICOWS35
+  while (!ss.digitalRead(SS_SWITCH));
+#endif
+  
+  tft.fillScreen(ILI9341_BLACK);
   tft.setTextColor(ILI9341_WHITE);
   tft.setCursor(0,0);
   tft.println();
@@ -2961,24 +3569,1256 @@ void about(void)
   tft.println();
   tft.setTextColor(CL(192,192,64));
   tft.println("** Press button or key to return **");
-  MSerial.println("** Press button or key to continue **");
+  Serial.println("** Press button or key to continue **");
   keySel=-99;
   updateImage();
-  delay(50);
-  while(MSerial.available()) MSerial.read();
-  while(!getButtonPress(true) && !MSerial.available() && !ps2kb.available());
-  if (MSerial.available()) MSerial.read();
+  while(!getButtonPress(true) && !Serial.available() && !ps2kb.available() 
+#ifdef PICOWS35
+  && ss.digitalRead(SS_SWITCH)
+#endif
+  );
+  if (Serial.available()) Serial.read();
+#ifdef WIFI
+  if (WIFI.available()) WIFI.read();
+#endif
   if (ps2kb.available()) ps2kb.read();
   restoreText(true);
 }
 
+int dials[5][9];
+// references to Nova functions in recondemo session
+String redisplay = "2015";
+String loadimage = "2017";
+
+void interpret(String line, int pc, Stream &Ser)
+{ char m[50];
+
+  if (line.indexOf("|", 0)>0)
+  { int pos1 = line.indexOf('|', 0);
+    String t=line.substring(0, pos1);
+    interpret(t, pc, Ser);
+    t=line.substring(pos1+1);
+    interpret(t, pc, Ser);
+    return;
+  }
+
+  // allow substitution of e.g. %0 tokens into formatted register contents
+  if (line.indexOf("%")>=0)
+  { if (line.indexOf("%0")>=0) line.replace("%0", toOct(examineAC(0)));
+    if (line.indexOf("%1")>=0) line.replace("%1", toOct(examineAC(1)));
+    if (line.indexOf("%2")>=0) line.replace("%2", toOct(examineAC(2)));
+    if (line.indexOf("%3")>=0) line.replace("%3", toOct(examineAC(3)));
+    if (line.indexOf("%f")>=0) 
+    { float f = ((((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0))/65536.0;
+      line.replace("%f", String(f));
+    }
+    if (line.indexOf("%l")>=0) 
+    { int v = (((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0);
+      line.replace("%l", String(v));
+    }
+    if (line.indexOf("%4")>=0) 
+    { int v = (((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0);
+      line.replace("%4", String(v));
+    }
+  }
+  if (line.indexOf("\\")>=0)
+  { line.replace("\\n", "\n");
+    line.replace("\\r", "\r");
+  }
+
+  if (line.startsWith("echo "))
+  { for (int j=5; j<line.length(); j++) Serialwrite(line[j]);
+    return;
+  }
+
+  if (line.startsWith("range "))
+  { return; // only interpreted in the menu() function
+  }
+
+  if (line.startsWith("setuprecon"))
+  { static int choice=1;
+    choice=menu("Setup reconstruction", "data %i:range 2001 8\nstep %i:range 2002 11\nfilter %i:range 2003 3\ninterpolate %i:range 2004 2\ncalibrate %i:range 2005 10\ndisplay %i:range 2006 3\nexport %i:range 2011 3\nstorefn %i:range 2012 377\nviewfn %i:range 2013 37\n\nback\n", choice, true);
+    return;
+  }
+
+  if (line.startsWith("bshr_setuprecon"))
+  { static int choice=1;
+    choice=menu("Setup reconstruction", "interpolate %i:range 2004 2\ncalibrate %i:range 2005 10\nexport %i:range 2011 3\nstorefn %i:range 2012 377\nviewfn %i:range 2013 37\n\nback\n", choice, true);
+    return;
+  }
+
+  if (line.startsWith("bshr_menu"))
+  { static int choice=1;
+    choice=menu("BSHR demos", 
+      String("Backproj. Nova :mem 2001 000000|mem 2002 5|mem 2003 0|mem 2006 2|mem 2007 00|mem 2010 200|speed 020000|go 2000\n")+
+      String("One point Nova :mem 2001 000000|mem 2002 3|mem 2003 0|mem 2006 1|mem 2007 00|mem 2010 200|speed 020000|go 2000\n")+
+      String("One point Turbo:mem 2001 000000|mem 2002 3|mem 2003 0|mem 2006 1|mem 2007 00|mem 2010 200|speed 177777|go 2000\n")+
+      String("Four points '  :mem 2001 170000|mem 2002 3|mem 2003 0|mem 2006 1|mem 2007 00|mem 2010 200|speed 177777|go 2000\n")+
+      String("Unfiltered  '  :mem 2001 171000|mem 2002 3|mem 2003 0|mem 2006 1|mem 2007 00|mem 2010 200|speed 177777|go 2000\n")+
+      String("Filtered    '  :mem 2001 171000|mem 2002 3|mem 2003 1|mem 2006 1|mem 2007 00|mem 2010 200|speed 177777|go 2000\n")+
+      String("High res    '  :mem 2001 171000|mem 2002 1|mem 2003 1|mem 2006 0|mem 2007 12|mem 2010 040|speed 177777|go 2000\n")+
+      String("Dial is Level  :dial 0 2007 200 "+redisplay+"|go "+redisplay+"\n")+
+      String("Dial is Window :dial 0 2010 200 "+redisplay+"|go "+redisplay+"\n")+
+      String("Dial is Viewer :dial 0 2013 37 "+loadimage+"|go "+loadimage+"\n")+
+      String("Disable Dial   :dial 0 0\n")+
+      String("Reset L/W      :mem 2007 0|mem 2010 200|go "+redisplay+"\n")+
+      String("Setup BSHR     :bshr_setuprecon\n")+
+      String("\nDG Basic menu:dial 0 0|session .basicsample\n")+
+      String("About:about\n"),
+    choice, true);
+    return;
+  }
+
+  if (line.startsWith("dial "))
+  { int pos1 = 5;
+    int v[10];
+    for (int i=0; i<10; i++) v[i]=0;
+    int i=0;
+    String t=line;
+    while(1)
+    { t=t.substring(pos1+1);
+      v[i++] = readOct(t, 0);
+      pos1 = t.indexOf(' ', 0);
+      if (pos1<0)
+      { v[i++] = readOct(t, 0);
+        break;
+      }
+    }
+
+    int dial=v[0];
+    if (dial<5 && dial>=0)
+    { for (i=0; i<9; i++)
+      { dials[dial][i] = v[i+1];
+      }
+    }
+    return;
+  }
+
+  if (line.startsWith("autostart"))
+  { line = nextcmd;
+    if(getSessionName(rootID)==".BASICSESSION")
+    injectSerial("\x1b");
+  }
+
+  // show help text
+  if (line.startsWith("help"))
+  { Ser.println(helpstring);
+  }
+
+  // Nova virtual console deposit (Kaddress/data)
+  else if (line.startsWith("K"))
+  { int pos1 = 1;
+    int pos2 = line.indexOf('/', 0);
+    if (pos2<0)
+    { kmode=false;
+    }
+    else
+    { int a = readOct(line, pos1);
+      int b = readOct(line, pos2+1);
+      deposit(a, b);
+      kmode=true;
+      kaddress=a+1;
+    }
+  }
+  else if (kmode && line[0]>'0' && line[0]<='7')
+  { int b=readOct(line, 0);
+    deposit(kaddress, b);
+    kaddress++;
+  }
+
+  // disassemble
+  else if (line.startsWith("list "))
+  { int pos1 = 5;
+    int pos2 = line.indexOf(' ', 6);
+    unsigned short a = readOct(line, pos1);
+    int b = pos2<0 ? 16 : readOct(line, pos2+1);
+    for (unsigned short i=0; i<b; i++)
+    { Ser.print(toOct(a));
+      unsigned short v=examine(a++);
+      Ser.print(" ");
+      Ser.print(toOct(v));
+      Ser.println(printDisas(v, OCT));
+    }
+    nextcmd = "list "+toOct(a)+" "+toOct(b);
+    examine(pc);
+  }
+    
+  // dump memory
+  else if (line.startsWith("dump "))
+  { int pos1 = 5;
+    int pos2 = line.indexOf(' ', 6);
+    unsigned short a = readOct(line, pos1);
+    int b = pos2<0 ? 16 : readOct(line, pos2+1);
+    for (unsigned short i=0; i<b; i++)
+    { Ser.print(toOct(a));
+      unsigned short v=examine(a++);
+      Ser.print(" ");
+      Ser.print(toOct(v));
+      Ser.print(" ");
+      Ser.print(char(max(v>>8,32)));
+      Ser.print(char(max(v&255,32)));
+      Ser.println("");
+    }
+    nextcmd = "dump "+toOct(a)+" "+toOct(b);
+    examine(pc);
+  }
+
+  // dump memory decimal (e.g. to grab image)
+  else if (line.startsWith("dump10 "))
+  { int pos1 = 7;
+    int pos2 = line.indexOf(' ', 8);
+    unsigned short a = readOct(line, pos1);
+    int b = pos2<0 ? 16 : readOct(line, pos2+1);
+    for (unsigned short i=0; i<b; i++)
+    { signed short v=examine(a++);
+      if (i%80==0) Ser.println("");
+      Ser.print(v);
+      Ser.print(",");
+    }
+    nextcmd = "dump10 "+toOct(a)+" "+toOct(b);
+    examine(pc);
+  }
+
+  // read or set accumulator
+  else if (line.startsWith("ac"))
+  { int pos1 = 2;
+    int pos2 = line.indexOf(' ', 3);
+    unsigned short a = readOct(line, pos1);
+    if (pos2>=0) depositAC(a, readOct(line, pos2+1));
+    Ser.println("ac"+String(a)+" = "+toOct(examineAC(a)));
+    if (pos2>=0) nextcmd = "ac"+String((a+1)%4)+" "+toOct(readOct(line, pos2+1));
+    else nextcmd = "ac"+String((a+1)%4);
+  }
+
+  // read or set pc
+  else if (line.startsWith("pc"))
+  { int pos2 = line.indexOf(' ', 2);
+    if (pos2>=0) examine(readOct(line, pos2+1));
+    NovaPC = readOct(line, pos2+1);
+    Ser.println("pc = "+toOct(NovaPC&0x7fff));
+    nextcmd = "step";
+  }
+
+  // show all registers
+  else if (line.startsWith("reg"))
+  { for (int a=0; a<4; a++)
+      Ser.println("ac"+String(a)+" = "+toOct(examineAC(a)));
+    Ser.println("pc = "+toOct(NovaPC&0x7fff));
+    Ser.println("carry = "+String(NovaC!=0));
+    // Ser.println("intrq = "+String(int_req, OCT));
+  }
+
+  // read or set memory location
+  else if (line.startsWith("mem "))
+  { int pos1 = 4;
+    int pos2 = line.indexOf(' ', 5);
+    unsigned short a = readOct(line, pos1);
+    if (pos2>=0) deposit(a, readOct(line, pos2+1));
+    Ser.println("mem "+toOct(a)+" = "+toOct(examine(a)));
+    examine(pc);
+    if (pos2>=0) nextcmd = "mem "+toOct(a+1)+" "+toOct(readOct(line, pos2+1));
+    else nextcmd = "mem "+toOct(a+1);
+  }
+
+  // assemble instruction
+  else if (line.startsWith("asm "))
+  { int pos1 = 4;
+    int pos2 = line.indexOf(' ', 5);
+    unsigned short a = readOct(line, pos1);
+    if (pos2>=0) {
+      String t=line.substring(pos2);
+      t.toLowerCase();
+
+      // shortcuts to frequent routines, must be in memory to work
+      if      (t==" .mul"   ) deposit(a, 0x043e); // JMS @3e etc
+      else if (t==" .div"   ) deposit(a, 0x043f);
+      else if (t==" .sys"   ) deposit(a, 0x0440);
+      else if (t==" .memclr") deposit(a, 0x045b);
+      else if (t==" .memcpy") deposit(a, 0x045c);
+      else if (t.startsWith(" .db "))     // .db num or .db "string"
+      { int pos3 = t.indexOf('"');
+        if (pos3>0)
+        { int pos4=t.indexOf('"',pos3+1);
+          t = t.substring(pos3+1, pos4);
+          int j=t.length()+1;
+          if (j&1) j++;
+          for (int i=0; i<j; i+=2, a++)
+            deposit(a, ((t[i]<<8)+t[i+1]));
+          a--;
+        }
+        else
+        { pos3 = t.indexOf(' ', 4);
+          unsigned short b = readOct(t, pos3+1);
+          deposit(a, b);
+        }
+      }
+
+      else for(int b=0; b<=65535;)
+      { String s = printDisas(b, OCT);
+        s.toLowerCase();
+        if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
+          b+=63; 
+        // must be different instruction (all coded in high 10 bits)
+        else if (s.equals(t))
+        { deposit(a, b);
+          break;
+        }
+        else 
+          b++;
+      }
+      nextcmd = "asm "+toOct(a+1)+" ";
+    }
+    Ser.print(toOct(a));
+    unsigned short v=examine(a++);
+    Ser.print(" ");
+    Ser.print(toOct(v));
+    Ser.println(printDisas(v, OCT));
+    examine(pc);
+  }
+
+  // run without serial IO
+  else if (line.startsWith("go "))
+  { int pos1 = 3;
+    unsigned short a = readOct(line, pos1);
+    Ser.println("running");
+    SerialIO=true;
+    startNova(a);
+    nextcmd = "stop";
+  }
+
+  // run with serial IO
+  else if (line.startsWith("run "))
+  { int pos1 = 4;
+    SerialIO=true;
+    unsigned short a = readOct(line, pos1);
+    Ser.println("running, use ctrl-c to return to command mode");
+    startNova(a);
+    nextcmd = "stop";
+  }
+
+  else if (line.startsWith("reset"))
+  { resetNova();
+    stopNova(); 
+    if(SerialIO) 
+    { Ser.println("interactive mode");
+      SerialIO=false; 
+    }  
+    nextcmd = "";
+  }
+
+  else if (line.startsWith("poweroff"))
+  { resetNova();
+    stopNova(); 
+    Ser.println("power off");
+    SerialIO=false; 
+    novaKey=1;
+    nextcmd = "";
+  }
+
+  else if (line.startsWith("stop"))
+  { stopNova(); 
+    if(SerialIO) 
+    { Ser.println("stopped");
+      SerialIO=false; 
+    }  
+    nextcmd = "continue";
+  }
+
+  else if (line.startsWith("continue"))
+  { continueNova();
+    SerialIO=true; 
+    nextcmd = "stop";
+  }
+
+  else if (line.startsWith("init")) {
+    setup();
+    delay(100);
+    nextcmd = "";
+  }
+
+  else if (line.startsWith("version")) {
+    Ser.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
+    Ser.println();
+    Ser.println("Data General Nova - 1st 16 bit minicomputer in 1969");
+    Ser.println("This circuit simulates a 1970 DG Nova 1200 machine,");
+    Ser.println("equipped with 1 serial board and 4 8 KW core boards.");
+    Ser.println("It runs the original 1970 DG BASIC software. You");
+    Ser.println("can load and modify different 'sessions' to demo.");
+    Ser.println();
+    Ser.println("Note: the graphics terminal is an anachronism ;->>>");
+    Ser.println();
+    Ser.println("Contains parts of simhv3-9");
+    Ser.println("Copyright (c) 1993-2008, Robert M. Supnik");
+    Ser.println();
+    Ser.println("Contains image from FrontPanel 2.0");
+    Ser.println("Copyright (c) 2007-2008, John Kichury");
+    nextcmd = "";
+  }
+
+  else if (line.startsWith("about")) {
+    about();
+    nextcmd = "";
+  }
+
+  // load memory from eeprom
+  else if (line.startsWith("load "))
+  { int pos1 = 5;
+    int pos2 = line.indexOf(' ', 6);
+    int pos3 = line.indexOf(' ', pos2+1);
+    if (pos2>=0 && pos3>=0)
+    { unsigned short a = readOct(line, pos1);
+      //unsigned short b = readOct(line, pos2+1);
+      //unsigned short c = readOct(line, pos3+1);
+      //
+      //Ser.println("loaded memory "+toOct(s)+ " with " + c + " blocks");
+      nextcmd = "run "+toOct(a);
+    }
+    else
+      nextcmd = "";
+    examine(pc);
+  }
+
+  // save memory to eeprom
+  else if (line.startsWith("save "))
+  { //int pos1 = 5;
+    //int pos2 = line.indexOf(' ', 6);
+    //int pos3 = line.indexOf(' ', pos2+1);
+    //if (pos2>=0 && pos3>=0)
+    //{ //unsigned short a = readOct(line, pos1);
+      //unsigned short b = readOct(line, pos2+1);
+      //unsigned short c = readOct(line, pos3+1);
+      //unsigned short s=a;
+      //
+      //Ser.println("saved memory "+toOct(s)+ " total of " + c + " blocks");
+    //}
+    nextcmd = "";
+    examine(pc);
+  }
+
+  // restore memory from eeprom
+  else if (line.startsWith("restore"))
+  { if (hasSD) restoreSession(".SD");
+    else restoreSession(".EEPROM");
+  }
+
+  // store memory to eeprom
+  else if (line.startsWith("store"))
+  { storeSession();
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
+     EEPROM.commit(); 
+#endif
+  }
+
+  // debug step
+  else if (line.startsWith("step"))
+  { int pos2 = line.indexOf(' ', 4);
+    unsigned short a = pos2>0 ? readOct(line, pos2+1) : 1;
+    for (int i=0; i<a; i++) {
+      serialDebug(1);
+      serialDebug(2); 
+      Ser.println();
+      stepNova();
+    }
+    nextcmd = "step "+toOct(a);
+  }
+
+  // print lights status
+  else if (line.startsWith("lights")) {
+    Ser.println("Data="+toOct(novaData)); 
+    Ser.println("Addr="+toOct(novaAddress)); 
+    Ser.println("Status="+toOct(novaLights));
+    nextcmd = "lights";
+  }
+
+  // run test function (may not return)
+  else if (line.startsWith("test "))
+  { //int pos1 = 5;
+    //unsigned short a = readOct(line, pos1);
+    //tests(a);
+  }
+
+  // set line of LCD
+  else if (line.startsWith("lcd "))
+  { int pos1 = 4;
+    int pos2 = line.indexOf(' ', pos1+1);
+    if (pos2>=0)
+    { unsigned short a = readOct(line, pos1);
+      //display(a, line.substring(pos2+1));
+      nextcmd = "lcd "+String((a+1)%5)+" "+line.substring(pos2+1);
+    }
+  }
+
+  // program leds
+  else if (line.startsWith("led "))
+  { int pos1 = 4;
+    unsigned short a = readOct(line, pos1);
+    //gpio(a & 255);
+
+#if defined(PICOD2)
+    digitalWrite(LED_RED, !(a&1));
+    digitalWrite(LED_GREEN, !((a>>1)&1));
+    digitalWrite(LED_BLUE, !((a>>2)&1));
+#endif
+
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(PICOWS35)
+    pinMode(25, OUTPUT);
+    digitalWrite(25, (a>>8)&1);
+#elif !defined(PICOD2)
+    digitalWrite(13, (a>>8)&1);
+#endif
+    //digitalWrite(12, (a>>9)&1);
+    //digitalWrite(11, (a>>10)&1);
+    //writeColor(a&15);
+    nextcmd = "led "+toOct(a+1);
+  }
+      
+  // program DAC
+  else if (line.startsWith("dac "))
+  { int pos1 = 4;
+    unsigned short a = readOct(line, pos1);
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32)
+#ifdef A14
+    analogWrite(A14, a);
+#endif
+#endif
+    nextcmd = "dac "+toOct(a+1);
+  }
+
+  // read switches bank
+  else if (line.startsWith("reads"))
+  { Ser.println("Switches="+toOct(novaSwitches)); 
+    nextcmd = "reads";
+  }
+
+  // read key
+  else if (line.startsWith("readk"))
+  { //Ser.println("Key="+toOct(readKeys())); 
+    nextcmd = "readk";
+  }
+
+  // write data bus (for unconnected nova)
+  else if (line.startsWith("writed "))
+  { int pos1 = 7;
+    unsigned short a = readOct(line, pos1);
+    novaData = a;
+    nextcmd = "writed "+toOct(a+1);
+  }
+
+  // write address bus (for unconnected nova)
+  else if (line.startsWith("writea "))
+  { int pos1 = 7;
+    unsigned short a = readOct(line, pos1);
+    novaAddress = a;
+    nextcmd = "writea "+toOct(a+1);
+  }
+
+  // write lights (for unconnected nova)
+  else if (line.startsWith("writel "))
+  { int pos1 = 7;
+    unsigned short a = readOct(line, pos1);
+    novaLights = a;
+    nextcmd = "writel "+toOct(a+1);
+  }
+
+  // read ADC
+  else if (line.startsWith("adc"))
+  { 
+    int pos1 = 4;
+    int pins[8] = {A0, A1, A2, A3, A4, A5, A6, A7};
+    int pin=readOct(line, pos1);
+    pinMode(pins[pin&7], INPUT);
+    Ser.println("adc"+String(pin)+"="+toOct(analogRead(pins[pin&7])));
+    nextcmd = "adc";
+  }
+
+  // list eeprom block in hex (SD card file data.bin)
+  else if (line.startsWith("eeprom "))
+  { int pos1 = 7;
+    unsigned short a = readOct(line, pos1);
+    String t;
+    if (a>=0xf000)
+    { for (short i=0; i<128; i++)
+      { String s; int v;
+        if      (a>=0xf600) v = nova_sinogram4[(a-0xf000)*64+i/2];
+        else if (a>=0xf400) v = nova_sinogram3[(a-0xf000)*64+i/2];
+        else if (a>=0xf200) v = nova_sinogram2[(a-0xf000)*64+i/2];
+        else if (a>=0xf000) v = nova_sinogram1[(a-0xf000)*64+i/2];
+        if (i&1) v = v>>8; else v = v&255;
+        s = toHex2(v);
+        t = t + char(max(v&255,32));
+        if ((i&15)==15) 
+        { Ser.print(s);
+          Ser.print(" ");
+          Ser.println(t);
+          t = "";
+        }
+        else 
+          Ser.print(s);
+      }
+    }
+    
+#ifdef SD_CS
+    else
+    { myFile = SD.open("data.bin");
+      if (myFile)
+      { myFile.seek(a*128);
+        for (short i=0; i<128; i++)
+        { String s;
+          s = toHex2(myFile.read());
+          if ((i&15)==15) Ser.println(s); else Ser.print(s);
+        }
+        myFile.close();
+      }
+    }
+#endif
+    nextcmd = "eeprom "+toOct(a+1);
+  }
+
+  // list memory block in hex
+  else if (line.startsWith("memory "))
+  { int pos1 = 7;
+    unsigned short a = readOct(line, pos1);
+    for (short i=0; i<64; i++)
+    { String s;
+      s = toHex(examine(a+i));
+      if ((i&7)==7) Ser.println(s); else Ser.print(s);
+    }
+    nextcmd = "memory "+toOct(a+64);
+  }
+
+  // clear block of memory
+  else if (line.startsWith("clear "))
+  { int pos1 = 6;
+    int pos2 = line.indexOf(' ', 7);
+    int pos3 = line.indexOf(' ', pos2+1);
+    if (pos2>=0)
+    { unsigned short a = readOct(line, pos1);
+      unsigned short b = readOct(line, pos2+1);
+      unsigned short c = pos3<0 ? 0 : readOct(line, pos3+1);
+      unsigned short s=a;
+      for (int i=0; i<b; i++)
+        deposit(s+i, c);
+      Ser.println("cleared memory "+toOct(s)+ " " + toOct(b) + " words to " + toOct(c));
+      nextcmd = "dump "+toOct(a);
+    }
+    else
+      nextcmd = "";
+    examine(pc);
+  }
+
+  // load hex data to memory
+  else if (line.startsWith(":"))
+  { line.toCharArray(m, 50);
+    unsigned short n = readHex(m+1,2);
+    unsigned short a=readHex(m+3,4);
+    if (n<=10) for (unsigned short i=0; i<n; i++) deposit(a++, readHex(m+7+i*4,4));
+    nextcmd = "";
+  }
+
+  // load hex data (16 bytes) to eeprom (SD card file)
+  else if (line.startsWith(";"))
+  { line.toCharArray(m, 50);
+    unsigned short n = readHex(m+1,1);
+    unsigned short a=readHex(m+2,4);
+    //int deviceaddress = 0x50;
+    //if (a>511) deviceaddress+=4;
+    for (short i=0; i<16; i++) m[i]=readHex(m+6+i*2,2);
+    //i2c_eeprom_write_page(deviceaddress, a*128+n*16, (byte *)m, 16);
+#ifdef SD_CS
+    myFile = SD.open("data.bin", FILE_WRITE);
+    if (myFile)
+    { myFile.seek(a*128+n*16);
+      for (int i=0; i<16; i++) 
+      { myFile.write(m+i, 1);
+      }
+      myFile.close();
+    }
+#endif
+    nextcmd = "";
+  }
+
+  else if (line.startsWith("?"))
+  { Ser.print(toHex(novaAddress)); 
+    Ser.print(toHex(novaData)); 
+    Ser.println(toHex2(novaLights));
+    nextcmd = "?";
+  }
+
+  // dump all registers in hex
+  else if (line.startsWith("$"))
+  { for (int a=0; a<4; a++)
+      Ser.print(toHex(examineAC(a)));
+    Ser.println(toHex(novaAddress));
+    nextcmd = "";
+  }
+
+  // visualize memory as gray scale a=address b=length of visualization (default 1600 = 20 lines)
+  else if (line.startsWith("vis "))
+  { int pos1 = 4;
+    int pos2 = line.indexOf(' ', 5);
+    unsigned short a = readOct(line, pos1);
+    int b = pos2<0 ? 1600 : readOct(line, pos2+1);
+    for (unsigned short i=0; i<b; i++)
+    { unsigned short v=examine(a++);
+      char visual[]=" .:-=+*#%@";
+      short w = v/2048;
+      if (v>=32768) Ser.print("-");
+      else if (w>=(int)strlen(visual)) Ser.print("+");
+      else Ser.write(visual[w]);
+      if (i%80==79) Ser.println("");
+    }
+    nextcmd = "vis "+toOct(a)+" "+toOct(b);
+    examine(pc);
+  }
+
+  // plot memory a=address b=value range (applied positive and negative)
+  else if (line.startsWith("plot "))
+  { int pos1 = 5;
+    int pos2 = line.indexOf(' ', 6);
+    unsigned short a = readOct(line, pos1);
+    int b = pos2<0 ? 32767 : readOct(line, pos2+1);
+    short vals[80];
+    for (unsigned short i=0; i<80; i++) 
+      vals[i] = examine(a++);
+    for (short i=10; i>=-10; i--)
+    { for (unsigned short j=0; j<80; j++)
+      {  short v = (10*(int)vals[j] + b/2)/b;
+         if (v==i) Ser.print("*");
+         else if (i==0) Ser.print("-");
+         else Ser.print(" ");
+       }
+      Ser.println("");
+    }
+    nextcmd = "plot "+toOct(a)+" "+toOct(b);
+    examine(pc);
+  }
+
+  // write serial character
+  else if (line.startsWith("serw "))
+  { int pos1 = 5;
+    unsigned short a = readOct(line, pos1);
+    Serial1.write(a);
+    nextcmd = "serw "+toOct(a+1);
+  }
+
+  // set front panel switches
+  else if (line.startsWith("fp "))
+  { int pos1 = 3;
+    unsigned short a = readOct(line, pos1);
+    novaSwitches=a;
+  }
+
+  // absolute tape loader using data in eeprom; tape data is stored after 16 bytes $$llFILENAME@; where ll is its 16 bits length
+  else if (line.startsWith("tape "))
+  { int pos1 = 5;
+    String filename = line.substring(pos1, 99);
+    filename.toUpperCase(); // +"@";
+
+    // absolute tape loader using program data
+    if (filename==".BASIC")
+    { nextcmd=tapeloader(basictape, sizeof(basictape), ".basic");
+      Ser.print(">");
+      line = "";
+      return;
+    }
+    if (filename==".SOS_XBASIC")
+    { nextcmd=tapeloader(sos_xbasictape, sizeof(sos_xbasictape), ".sos_xbasic");
+      Ser.print(">");
+      line = "";
+      return;
+    }
+    if (filename=="LIST")
+    { Ser.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
+      Ser.println(".SOS_XBASIC in code memory; length "+toOct(sizeof(basictape)));
+    }
+    else if(filename!="LIST")
+      Ser.println("Tape "+filename+" not found");
+  }
+
+  else if (line.startsWith("unloaddiff "))
+  { int pos1=11;
+    String filename = line.substring(pos1, 99);
+    filename.toUpperCase();
+    unloadDiffCode(filename);
+  }
+
+  else if (line.startsWith("writeraw "))
+  { int pos1=9;
+    unsigned short a = readOct(line, pos1);
+    int pos2 = line.indexOf(' ', pos1+1);
+    if (pos2>0)
+    { unsigned short n = readOct(line, pos2+1);
+      int pos3 = line.indexOf(' ', pos2+1);
+      if (pos3>0)
+      { String filename = line.substring(pos3+1, 99);
+        filename.toUpperCase();
+        write_raw(a, n, filename);
+      }
+    }
+  }
+
+  else if (line.startsWith("readraw "))
+  { int pos1=8;
+    unsigned short a = readOct(line, pos1);
+    int pos2 = line.indexOf(' ', pos1+1);
+    if (pos2>0)
+    { unsigned short n = readOct(line, pos2+1);
+      int pos3 = line.indexOf(' ', pos2+1);
+      if (pos3>0)
+      { String filename = line.substring(pos3+1, 99);
+        filename.toUpperCase();
+        read_raw(a, n, filename);
+      }
+    }
+  }
+
+  else if (line.startsWith("screendump "))
+  { int pos1=11;
+    String filename = line.substring(pos1, 99);
+    filename.toUpperCase();
+    write_bmp(480, 320, filename);
+  }
+
+  else if (line.startsWith("unload"))
+  { unload((unsigned short *) NULL, 0, 0);
+  }
+
+  else if (line.startsWith("cleareepromsession")) // undocumented
+  { EEPROM.write(38, 0);
+    EEPROM.write(39, 0);
+    EEPROM.write(40, 0);
+    EEPROM.write(56, 0);
+    EEPROM.write(57, 0);
+    EEPROM.write(58, 0);
+    EEPROM.write(59, 0);
+    Ser.println("Erased EEPROM session; will not load anymore");
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
+    EEPROM.commit();
+#endif
+  }
+
+  else if (line.startsWith("session "))
+  { int pos1 = 8;
+    String filename = line.substring(pos1, 99);
+    filename.toUpperCase();
+            
+    if (filename=="AUTO")
+    { EEPROM.write(40, 0);
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
+      EEPROM.commit();
+#endif
+    }
+    else if (filename=="MANUAL")
+    { EEPROM.write(40, 1);
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
+      EEPROM.commit();
+#endif
+    }
+    else if (filename=="LIST")
+    { for (int i=1; i<100; i++)
+      { String name=getSessionName(-i);
+        int len= getSessionLength(getSessionID(name));
+        if (name!="" && len>0)
+        Ser.println(name+" ; length "+String(len)+
+                       "; id: "+String(getSessionID(name))+
+                        "; based on: "+getSessionName(getSessionBase(getSessionID(name))));
+      }
+    }
+    else
+    { int id=getSessionID(filename);
+      if (id>0) restoreSession(filename);
+      else Ser.println("Session "+filename+" not found");
+      
+      if(getSessionName(rootID)==".BASICSESSION") nextcmd = "run 2";
+      if(getSessionName(rootID)==".RECONDEMO" || getSessionName(rootID)==".BSHR") nextcmd = "go 2000";
+    }
+  }
+
+  else if (line.startsWith("speed "))
+  { int pos1 = 6;
+    unsigned short a = readOct(line, pos1);
+    SIMINTERVAL=a;
+    nextcmd="";
+  }       
+
+#ifdef PICOW      
+  else if (line.startsWith("wifi SSID "))
+  { int pos1 = 10;
+    String name = line.substring(pos1, 99);
+    if (name.length()>16)
+    { Ser.println("wifi name is too long - truncated to 16 characters");
+      name = name.substring(0, 16);
+    }
+    for (int i=0; i<16; i++)
+      EEPROM.write(2+i, 0);
+    for (int i=0; i<name.length(); i++)
+      EEPROM.write(2+i, name.charAt(i));
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
+    EEPROM.commit();
+#endif
+  }
+
+  else if (line.startsWith("wifi password "))
+  { int pos1 = 14;
+    String name = line.substring(pos1, 99);
+    if (name.length()>16)
+    { Ser.println("wifi password is too long - truncated to 16 characters");
+      name = name.substring(0, 16);
+    }
+    for (int i=0; i<16; i++)
+      EEPROM.write(18+i, 0);
+    for (int i=0; i<name.length(); i++)
+      EEPROM.write(18+i, name.charAt(i));
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
+    EEPROM.commit();
+#endif
+  }
+
+  else if (line.startsWith("wifi forget"))
+  { for (int i=0; i<32; i++)
+      EEPROM.write(2+i, 0);
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
+    EEPROM.commit();
+#endif
+  }
+#endif
+
+  else if (line.startsWith("grmode "))
+  { int pos1 = 7;
+    unsigned short a = readOct(line, pos1);
+    graddress = 0;
+    grzoom = (a&0x1e)>>1;
+    int grclear = (a&0x20);
+    grmono = (a&0xffc0)>>6;
+    Ser.println(grmono);
+    if (grclear) 
+#ifdef PICOWS35
+        tft.fillRect(0, 240, 320, 240, ILI9341_BLACK);
+#else
+        tft.fillRect(0, 0, 320, 240-93, ILI9341_BLACK);
+#endif
+  }
+
+  else if (line.startsWith("grdisplay "))
+  { int pos1 = 10;
+    int val = readOct(line, pos1);
+    if (grmono)
+    { if (val>32767) val = val-65536;
+      val = val / grmono;
+      if (val<0) val=0;
+      if (val>255) val=255;
+      val = CL(val, val, val);
+    }
+#ifdef PICOWS35
+    tft.fillRect(graddress%320, 240+(graddress/320), grzoom, grzoom, val);
+#else
+    tft.fillRect(graddress%320, 0+(graddress/320), grzoom, grzoom, val);
+#endif
+    graddress += grzoom;
+    if((graddress%320)<grzoom) graddress = (graddress/320 + grzoom-1) * 320;
+  }
+
+  else if (line.startsWith("reconstructtest"))
+  { // reference version of nova reconstructor reimplemented in C; mvh 29 January 2025
+    #define projections 180
+    float piprojs=3.1416/projections;
+    float pscale=256.0/80.0;
+    
+    // working memory
+    short projection [130]; // 1 word guard for projections
+    short projection2[130];
+    short projectionh[512]; // 128 words guard for high resolution projection
+    short image[6400];
+    // clear all, including the guard words that allow accessing outside array
+    asetc(0, projection,  130);
+    asetc(0, projection2, 130);
+    asetc(0, projectionh, 512);
+    asetc(0, image, 6400);
+    
+    // generate lookup tables (can be done once)
+    int offsets[projections];
+    int stepx[projections];
+    int stepy[projections];
+    for (int i=0; i<projections; i++)
+    { offsets[i] = 65536.0*(-40.0*pscale*cos(i*piprojs) - 40.0*pscale*sin(i*piprojs)+128.0);
+      stepx[i]   = 65536.0*(1.0  *pscale*cos(i*piprojs));
+      stepy[i]   = 65536.0*(1.0  *pscale*sin(i*piprojs));
+    }
+    
+    // reconstruction loop
+    for (int curproj=0; curproj<projections; curproj++)
+    { get_sinogram(projection, curproj, 180/projections);
+      rampfilter(projection+1,   projection2+1, 128);
+      blurfilter(projection2+1,  projection+1, 128);
+      blurfilter(projection+1,   projection2+1, 128);
+      interpolate(projection2+1, projectionh+128, 128);
+      int curoffset = offsets[curproj];
+      for (int row=0; row<80; row++)
+      { stretch(projectionh+128, projection, curoffset, stepx[curproj], 80);
+        aadda(projection, image+row*80, 80);
+        curoffset += stepy[curproj];
+      }
+      for (int i=0; i<6400; i++)
+        deposit(04000+i, image[i]);
+    }
+  }
+  else if (line.length()>0)
+    Ser.println("Unknown or mistyped command ignored");
+}
+
+// Help function for reconstructtest
+void interpolate(short *inp, short *outp, int n)
+{ for (int i=0, j=0; i<n; i++)
+  { outp[j++] = inp[i];
+    outp[j++] = (inp[i]+inp[i+1])/2;
+  }
+}
+void stretch(short *inp, short *outp, int offset, int stepx, int n)
+{ for (int i=0; i<n; i++)
+  { outp[i]=inp[offset>>16];
+    offset += stepx;
+  }
+}
+void rampfilter(short *inp, short *outp, int n)
+{ for (int i=0; i<n; i++)
+  { short s=(inp[i-1]+inp[i+1])/2;
+    outp[i] = inp[i]-s;
+  }
+}
+void blurfilter(short *inp, short *outp, int n)
+{ for (int i=0; i<n; i++)
+  { short s=(inp[i-1]+inp[i+1])/2;
+    outp[i] = inp[i]+s;
+  }
+}
+void get_sinogram(short *outp, int i, int skip)
+{ aseta(((short *)nova_sinogram2)+i*skip*128, outp, 128);
+}
+void aadda(short *inp, short *outp, int n)
+{ for (int i=0; i<n; i++)
+   outp[i]+=inp[i];
+}
+void asetc(short inp, short *outp, int n)
+{ for (int i=0; i<n; i++)
+   outp[i]=inp;
+}
+void aseta(short *inp, short *outp, int n)
+{ for (int i=0; i<n; i++)
+   outp[i]=inp[i];
+}
+
 // process Serial data to pass to Nova or for monitor
 void processSerial(int count)
-{ int av = MSerial.available();
-  byte b = Serialread();
+{ int av = Serial.available();
+  byte b;
   char m[50];
   int pc;
   int a;
+
+  // power ON if not
+  if (novaKey==1)
+  { processButton(49);
+    return;
+  }
+
+  b = Serialread();
+  
+  if (b==PS2_F1)
+  { processButton(49); // on-off
+    return;
+  }
+  else if (b==PS2_F2)
+  { processButton(19); // restore
+    return;
+  }
+  else if (b==PS2_F3)
+  { processButton(20); // store
+    return;
+  }
+  else if (b==PS2_F4)
+  { processButton(23); // speed
+    return;
+  }
+  else if (b==PS2_F5) 
+  { about();           // about
+    return;
+  }
+  else if (b==PS2_F6)
+  { processButton(25); // cls
+    return;
+  }
+  else if (b==PS2_F7)
+  { processButton(10); // stop
+    return;
+  }
+  else if ( b==PS2_F8)
+  { processButton(17); // step
+    return;
+  }
+  else if (b==PS2_F9)
+  { processButton(12); // continue
+    return;
+  }
+  else if (b==PS2_F10)
+  { processButton(24); // menu
+    return;
+  }
+  else if (b==PS2_F12)
+  { processButton(26); // help
+    return;
+  }
+
+  if (SerialIO) 
+  { if (b==3)
+    { SerialIO=false;
+      stopNova();
+      Serial.println("ctrl-C");
+      Serial.print(">");
+      return;
+    }
+    else
+    { if (DEV_IS_DONE(INT_TTI)) 
+     { if (av) injectSerial(b); // avoid it getting lost
+        return;
+     }
+      
+      //if (DEV_IS_BUSY(INT_TTI))
+      { ttibuf= b;
+        DEV_CLR_BUSY( INT_TTI ) ;
+        DEV_SET_DONE( INT_TTI ) ;
+        DEV_UPDATE_INTR ;
+        return;
+      }
+    }
+    return;
+  }
+
+  // ctrl-C
+  if (b==3)
+  { SerialIO=false;
+    stopNova();
+    Serial.println("ctrl-C");
+    Serial.print(">");
+    line = "";
+    return;
+  }
+
+  // new interactive mode
+  else 
+  { if (b==27) // read escape key sequences (up and down)
+    { int k = Serialread();
+      if (k=='[')
+      { k = Serialread();
+        if (k=='A')
+        { nhist--;
+          if (nhist<0) nhist=0;
+          line = history[nhist];
+          Serial.write("\33[2K\r");
+          Serial.print(">");
+          Serial.print(line);
+        }
+        else if (k=='B')
+        { nhist++;
+          if (nhist>=NHISTORY) nhist=NHISTORY-1;
+          line = history[nhist];
+          Serial.write("\33[2K\r");
+          Serial.print(">");
+          Serial.print(line);
+        }
+      }
+      else Serial.write(k);
+    }
+    else if (b==127 || b==8) // backspace
+    { if (line.length()>0) 
+      { line.remove(line.length()-1);
+        Serial.write(8);
+        Serial.write(32);
+        Serial.write(8);
+      }
+    }
+    else if (b != '\r' && b != '\n') 
+    { line.concat(char(b)); 
+      Serial.write(b);
+    }
+
+    // enter
+    if (b == '\r') 
+    { // auto suggest next command
+      if (line=="" && nextcmd!="")
+      { line=nextcmd;
+        Serial.write("\33[2K\r");
+        Serial.print(">");
+        Serial.print(line);
+        nextcmd="";
+        return;
+      }
+  
+      Serial.println();
+
+      // search place to store history and store it
+      nhist=-1;
+      for (int i=0; i<NHISTORY; i++)
+      { if (history[i]=="") 
+        { history[i]=line;
+          nhist=i+1;
+          break;
+        }
+      }
+      if (nhist==-1)
+      { for (int i=1; i<NHISTORY; i++) 
+        { history[i-1]=history[i];
+        }
+        nhist=NHISTORY-1;
+        history[nhist++]=line;
+      }
+
+      // stop Nova when running
+      pc=NovaPC&0x7fff;
+
+      interpret(line, pc, Serial);
+
+      Serial.print(">");
+      line = "";
+    }
+  }
+}
+
+// process wifi data to pass to Nova or for monitor
+#ifdef WIFI
+void processWifi(int count)
+{ int av = WIFI.available();
+  byte b = WIFI.read();
+  char m[50];
+  int pc;
+  int a;
+
+//Serial.print('#');
+//Serial.println(b);
+//delay(50);
+
+  if (b==255)
+  { while(!WIFI.available());
+    int c=WIFI.read();
+    while(!WIFI.available());
+    int v=WIFI.read();
+
+    if (c==253) c=252;
+    else if (c==251) c=254;
+
+    WIFI.write(255);
+    WIFI.write(c);
+    WIFI.write(v);
+//Serial.println(c);
+//Serial.println(v);
+
+    while(!WIFI.available());
+    b = WIFI.read();
+//Serial.println(b);
+  }
+  else if (b==13)
+  { while(!WIFI.available());
+    WIFI.read();
+  }
 
   // power ON if not
   if (novaKey==1)
@@ -3035,8 +4875,8 @@ void processSerial(int count)
   { if (b==3)
     { SerialIO=false;
       stopNova();
-      MSerial.println("ctrl-C");
-      MSerial.print(">");
+      WIFI.println("ctrl-C");
+      WIFI.print(">");
       return;
     }
     else
@@ -3060,66 +4900,62 @@ void processSerial(int count)
   if (b==3)
   { SerialIO=false;
     stopNova();
-    MSerial.println("ctrl-C");
-    MSerial.print(">");
+    WIFI.println("ctrl-C");
+    WIFI.print(">");
     return;
   }
 
   // new interactive mode
   else 
   { if (b==27) // read escape key sequences (up and down)
-    { int k = Serialread();
+    { int k = WIFI.read();
       if (k=='[')
-      { k = Serialread();
+      { k = WIFI.read();
         if (k=='A')
         { nhist--;
           if (nhist<0) nhist=0;
           line = history[nhist];
-          MSerial.write("\33[2K\r");
-          MSerial.print(">");
-          MSerial.print(line);
+          WIFI.write("\33[2K\r");
+          WIFI.print(">");
+          WIFI.print(line);
         }
         else if (k=='B')
         { nhist++;
           if (nhist>=NHISTORY) nhist=NHISTORY-1;
           line = history[nhist];
-          MSerial.write("\33[2K\r");
-          MSerial.print(">");
-          MSerial.print(line);
+          WIFI.write("\33[2K\r");
+          WIFI.print(">");
+          WIFI.print(line);
         }
       }
-      else MSerial.write(k);
+      else WIFI.write(k);
     }
     else if (b==127 || b==8) // backspace
     { if (line.length()>0) 
       { line.remove(line.length()-1);
-        MSerial.write(8);
-        MSerial.write(32);
-        MSerial.write(8);
+        WIFI.write(8);
+        WIFI.write(32);
+        WIFI.write(8);
       }
     }
-    else if (b != '\r' && b != '\n' && b != 0)
+    else if (b != '\r' && b != '\n') 
     { line.concat(char(b)); 
-      MSerial.write(b);
-      innewline=false;
+      WIFI.write(b);
     }
 
     // enter
-    if (b == '\r' || b == '\n' || b == 0)
-    { if (innewline && b!='\r') return;
-
-      // auto suggest next command
-      innewline=true;
+    if (b == '\r') 
+    { // auto suggest next command
       if (line=="" && nextcmd!="")
       { line=nextcmd;
-        MSerial.write("\33[2K\r");
-        MSerial.print(">");
-        MSerial.print(line);
+        WIFI.write("\33[2K\r");
+        WIFI.print(">");
+        WIFI.print(line);
         nextcmd="";
         return;
       }
   
-      MSerial.println();
+      WIFI.println();
 
       // search place to store history and store it
       nhist=-1;
@@ -3140,16 +4976,18 @@ void processSerial(int count)
 
       // stop Nova when running
       pc=NovaPC&0x7fff;
-          
-          if (line.startsWith("autostart"))
-          { line = nextcmd;
+
+      interpret(line, pc, WIFI);
+/*          
+      if (line.startsWith("autostart"))
+      { line = nextcmd;
         if(getSessionName(rootID)==".BASICSESSION")
-                  injectSerial("\x1b");
-          }
+        injectSerial("\x1b");
+      }
 
       // show help text
       if (line.startsWith("help"))
-      { MSerial.println(helpstring);
+      { WIFI.println(helpstring);
       }
 
       // Nova virtual console deposit (Kaddress/data)
@@ -3180,11 +5018,11 @@ void processSerial(int count)
         unsigned short a = readOct(line, pos1);
         int b = pos2<0 ? 16 : readOct(line, pos2+1);
         for (unsigned short i=0; i<b; i++)
-        { MSerial.print(toOct(a));
+        { WIFI.print(toOct(a));
           unsigned short v=examine(a++);
-          MSerial.print(" ");
-          MSerial.print(toOct(v));
-          MSerial.println(printDisas(v, OCT));
+          WIFI.print(" ");
+          WIFI.print(toOct(v));
+          WIFI.println(printDisas(v, OCT));
         }
         nextcmd = "list "+toOct(a)+" "+toOct(b);
         examine(pc);
@@ -3197,14 +5035,14 @@ void processSerial(int count)
         unsigned short a = readOct(line, pos1);
         int b = pos2<0 ? 16 : readOct(line, pos2+1);
         for (unsigned short i=0; i<b; i++)
-        { MSerial.print(toOct(a));
+        { WIFI.print(toOct(a));
           unsigned short v=examine(a++);
-          MSerial.print(" ");
-          MSerial.print(toOct(v));
-          MSerial.print(" ");
-          MSerial.print(char(max(v>>8,32)));
-          MSerial.print(char(max(v&255,32)));
-          MSerial.println("");
+          WIFI.print(" ");
+          WIFI.print(toOct(v));
+          WIFI.print(" ");
+          WIFI.print(char(max(v>>8,32)));
+          WIFI.print(char(max(v&255,32)));
+          WIFI.println("");
         }
         nextcmd = "dump "+toOct(a)+" "+toOct(b);
         examine(pc);
@@ -3216,7 +5054,7 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', 3);
         unsigned short a = readOct(line, pos1);
         if (pos2>=0) depositAC(a, readOct(line, pos2+1));
-        MSerial.println("ac"+String(a)+" = "+toOct(examineAC(a)));
+        WIFI.println("ac"+String(a)+" = "+toOct(examineAC(a)));
         if (pos2>=0) nextcmd = "ac"+String((a+1)%4)+" "+toOct(readOct(line, pos2+1));
         else nextcmd = "ac"+String((a+1)%4);
       }
@@ -3226,17 +5064,17 @@ void processSerial(int count)
       { int pos2 = line.indexOf(' ', 2);
         if (pos2>=0) examine(readOct(line, pos2+1));
         NovaPC = readOct(line, pos2+1);
-        MSerial.println("pc = "+toOct(NovaPC&0x7fff));
+        WIFI.println("pc = "+toOct(NovaPC&0x7fff));
         nextcmd = "step";
       }
 
       // show all registers
       else if (line.startsWith("reg"))
       { for (int a=0; a<4; a++)
-          MSerial.println("ac"+String(a)+" = "+toOct(examineAC(a)));
-        MSerial.println("pc = "+toOct(NovaPC&0x7fff));
-        MSerial.println("carry = "+String(NovaC!=0));
-        // MSerial.println("intrq = "+String(int_req, OCT));
+          WIFI.println("ac"+String(a)+" = "+toOct(examineAC(a)));
+        WIFI.println("pc = "+toOct(NovaPC&0x7fff));
+        WIFI.println("carry = "+String(NovaC!=0));
+        // WIFI.println("intrq = "+String(int_req, OCT));
       }
 
       // read or set memory location
@@ -3245,7 +5083,7 @@ void processSerial(int count)
         int pos2 = line.indexOf(' ', 5);
         unsigned short a = readOct(line, pos1);
         if (pos2>=0) deposit(a, readOct(line, pos2+1));
-        MSerial.println("mem "+toOct(a)+" = "+toOct(examine(a)));
+        WIFI.println("mem "+toOct(a)+" = "+toOct(examine(a)));
         examine(pc);
         if (pos2>=0) nextcmd = "mem "+toOct(a+1)+" "+toOct(readOct(line, pos2+1));
         else nextcmd = "mem "+toOct(a+1);
@@ -3286,7 +5124,7 @@ void processSerial(int count)
 
           else for(int b=0; b<=65535;)
           { String s = printDisas(b, OCT);
-	          s.toLowerCase();
+            s.toLowerCase();
             if (s.substring(0, 4)!=t.substring(0, 4) && (((b&63)!=63)))
               b+=63; 
             // must be different instruction (all coded in high 10 bits)
@@ -3299,11 +5137,11 @@ void processSerial(int count)
           }
           nextcmd = "asm "+toOct(a+1)+" ";
         }
-        MSerial.print(toOct(a));
+        WIFI.print(toOct(a));
         unsigned short v=examine(a++);
-        MSerial.print(" ");
-        MSerial.print(toOct(v));
-        MSerial.println(printDisas(v, OCT));
+        WIFI.print(" ");
+        WIFI.print(toOct(v));
+        WIFI.println(printDisas(v, OCT));
         examine(pc);
       }
 
@@ -3311,7 +5149,7 @@ void processSerial(int count)
       else if (line.startsWith("go "))
       { int pos1 = 3;
         unsigned short a = readOct(line, pos1);
-        MSerial.println("running");
+        WIFI.println("running");
         SerialIO=true;
         startNova(a);
         nextcmd = "stop";
@@ -3322,7 +5160,7 @@ void processSerial(int count)
       { int pos1 = 4;
         SerialIO=true;
         unsigned short a = readOct(line, pos1);
-        MSerial.println("running, use ctrl-c to return to command mode");
+        WIFI.println("running, use ctrl-c to return to command mode");
         startNova(a);
         nextcmd = "stop";
       }
@@ -3331,7 +5169,7 @@ void processSerial(int count)
       { resetNova();
         stopNova(); 
         if(SerialIO) 
-        { MSerial.println("interactive mode");
+        { WIFI.println("interactive mode");
           SerialIO=false; 
         }  
         nextcmd = "";
@@ -3340,7 +5178,7 @@ void processSerial(int count)
       else if (line.startsWith("poweroff"))
       { resetNova();
         stopNova(); 
-        MSerial.println("power off");
+        WIFI.println("power off");
         SerialIO=false; 
         novaKey=1;
         nextcmd = "";
@@ -3349,7 +5187,7 @@ void processSerial(int count)
       else if (line.startsWith("stop"))
       { stopNova(); 
         if(SerialIO) 
-        { MSerial.println("stopped");
+        { WIFI.println("stopped");
           SerialIO=false; 
         }  
         nextcmd = "continue";
@@ -3368,21 +5206,21 @@ void processSerial(int count)
       }
 
       else if (line.startsWith("version")) {
-        MSerial.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
-        MSerial.println();
-        MSerial.println("Data General Nova - 1st 16 bit minicomputer in 1969");
-        MSerial.println("This circuit simulates a 1970 DG Nova 1200 machine,");
-        MSerial.println("equipped with 1 serial board and 4 8 KW core boards.");
-        MSerial.println("It runs the original 1970 DG BASIC software. You");
-        MSerial.println("can load and modify different 'sessions' to demo.");
-        MSerial.println();
-        MSerial.println("Note: the graphics terminal is an anachronism ;->>>");
-        MSerial.println();
-        MSerial.println("Contains parts of simhv3-9");
-        MSerial.println("Copyright (c) 1993-2008, Robert M. Supnik");
-        MSerial.println();
-        MSerial.println("Contains image from FrontPanel 2.0");
-        MSerial.println("Copyright (c) 2007-2008, John Kichury");
+        WIFI.println("Teensy Nova1200 by Marcel van Herk " __DATE__);
+        WIFI.println();
+        WIFI.println("Data General Nova - 1st 16 bit minicomputer in 1969");
+        WIFI.println("This circuit simulates a 1970 DG Nova 1200 machine,");
+        WIFI.println("equipped with 1 serial board and 4 8 KW core boards.");
+        WIFI.println("It runs the original 1970 DG BASIC software. You");
+        WIFI.println("can load and modify different 'sessions' to demo.");
+        WIFI.println();
+        WIFI.println("Note: the graphics terminal is an anachronism ;->>>");
+        WIFI.println();
+        WIFI.println("Contains parts of simhv3-9");
+        WIFI.println("Copyright (c) 1993-2008, Robert M. Supnik");
+        WIFI.println();
+        WIFI.println("Contains image from FrontPanel 2.0");
+        WIFI.println("Copyright (c) 2007-2008, John Kichury");
         nextcmd = "";
       }
 
@@ -3401,7 +5239,7 @@ void processSerial(int count)
           //unsigned short b = readOct(line, pos2+1);
           //unsigned short c = readOct(line, pos3+1);
           //
-          //MSerial.println("loaded memory "+toOct(s)+ " with " + c + " blocks");
+          //Serial.println("loaded memory "+toOct(s)+ " with " + c + " blocks");
           nextcmd = "run "+toOct(a);
         }
         else
@@ -3420,7 +5258,7 @@ void processSerial(int count)
           //unsigned short c = readOct(line, pos3+1);
           //unsigned short s=a;
           //
-          //MSerial.println("saved memory "+toOct(s)+ " total of " + c + " blocks");
+          //Serial.println("saved memory "+toOct(s)+ " total of " + c + " blocks");
         //}
         nextcmd = "";
         examine(pc);
@@ -3433,21 +5271,21 @@ void processSerial(int count)
       }
 
       // store memory to eeprom
-      else if (line.startsWith("store"))
+      else if (line.startsWith("store")) 
       { storeSession();
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
-         EEPROM.commit(); 
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32) || defined(PICOWS35)
+        EEPROM.commit(); 
 #endif
-      }
+     }
 
       // debug step
       else if (line.startsWith("step"))
       { int pos2 = line.indexOf(' ', 4);
         unsigned short a = pos2>0 ? readOct(line, pos2+1) : 1;
         for (int i=0; i<a; i++) {
-          serialDebug(1);
-          serialDebug(2); 
-          MSerial.println();
+          WIFIDebug(1);
+          WIFIDebug(2); 
+          WIFI.println();
           stepNova();
         }
         nextcmd = "step "+toOct(a);
@@ -3455,9 +5293,9 @@ void processSerial(int count)
 
       // print lights status
       else if (line.startsWith("lights")) {
-        MSerial.println("Data="+toOct(novaData)); 
-        MSerial.println("Addr="+toOct(novaAddress)); 
-        MSerial.println("Status="+toOct(novaLights));
+        WIFI.println("Data="+toOct(novaData)); 
+        WIFI.println("Addr="+toOct(novaAddress)); 
+        WIFI.println("Status="+toOct(novaLights));
         nextcmd = "lights";
       }
 
@@ -3491,7 +5329,7 @@ void processSerial(int count)
         digitalWrite(LED_BLUE, !((a>>2)&1));
 #endif
 
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS)
+#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(PICOWS35) 
         pinMode(25, OUTPUT);
         digitalWrite(25, (a>>8)&1);
 #elif !defined(PICOD2)
@@ -3517,13 +5355,13 @@ void processSerial(int count)
 
       // read switches bank
       else if (line.startsWith("reads"))
-      { MSerial.println("Switches="+toOct(novaSwitches)); 
+      { WIFI.println("Switches="+toOct(novaSwitches)); 
         nextcmd = "reads";
       }
 
       // read key
       else if (line.startsWith("readk"))
-      { //MSerial.println("Key="+toOct(readKeys())); 
+      { //Serial.println("Key="+toOct(readKeys())); 
         nextcmd = "readk";
       }
 
@@ -3558,7 +5396,7 @@ void processSerial(int count)
         int pins[8] = {A0, A1, A2, A3, A4, A5, A6, A7};
         int pin=readOct(line, pos1);
         pinMode(pins[pin&7], INPUT);
-        MSerial.println("adc"+String(pin)+"="+toOct(analogRead(pins[pin&7])));
+        WIFI.println("adc"+String(pin)+"="+toOct(analogRead(pins[pin&7])));
         nextcmd = "adc";
       }
 
@@ -3577,7 +5415,7 @@ void processSerial(int count)
         for (short i=0; i<64; i++)
         { String s;
           s = toHex(examine(a+i));
-          if ((i&7)==7) MSerial.println(s); else MSerial.print(s);
+          if ((i&7)==7) WIFI.println(s); else WIFI.print(s);
         }
         nextcmd = "memory "+toOct(a+64);
       }
@@ -3594,7 +5432,7 @@ void processSerial(int count)
           unsigned short s=a;
           for (int i=0; i<b; i++)
             deposit(s+i, c);
-          MSerial.println("cleared memory "+toOct(s)+ " " + toOct(b) + " words to " + toOct(c));
+          WIFI.println("cleared memory "+toOct(s)+ " " + toOct(b) + " words to " + toOct(c));
           nextcmd = "dump "+toOct(a);
         }
         else
@@ -3621,17 +5459,17 @@ void processSerial(int count)
       }
 
       else if (line.startsWith("?"))
-      { MSerial.print(toHex(novaAddress)); 
-        MSerial.print(toHex(novaData)); 
-        MSerial.println(toHex2(novaLights));
+      { WIFI.print(toHex(novaAddress)); 
+        WIFI.print(toHex(novaData)); 
+        WIFI.println(toHex2(novaLights));
         nextcmd = "?";
       }
 
       // dump all registers in hex
       else if (line.startsWith("$"))
       { for (int a=0; a<4; a++)
-          MSerial.print(toHex(examineAC(a)));
-        MSerial.println(toHex(novaAddress));
+          WIFI.print(toHex(examineAC(a)));
+        WIFI.println(toHex(novaAddress));
         nextcmd = "";
       }
 
@@ -3645,10 +5483,10 @@ void processSerial(int count)
         { unsigned short v=examine(a++);
           char visual[]=" .:-=+*#%@";
           short w = v/2048;
-          if (v>=32768) MSerial.print("-");
-          else if (w>=(int)strlen(visual)) MSerial.print("+");
-          else MSerial.write(visual[w]);
-          if (i%80==79) MSerial.println("");
+          if (v>=32768) WIFI.print("-");
+          else if (w>=(int)strlen(visual)) WIFI.print("+");
+          else WIFI.write(visual[w]);
+          if (i%80==79) WIFI.println("");
         }
         nextcmd = "vis "+toOct(a)+" "+toOct(b);
         examine(pc);
@@ -3666,11 +5504,11 @@ void processSerial(int count)
         for (short i=10; i>=-10; i--)
         { for (unsigned short j=0; j<80; j++)
           {  short v = (10*(int)vals[j] + b/2)/b;
-             if (v==i) MSerial.print("*");
-             else if (i==0) MSerial.print("-");
-             else MSerial.print(" ");
-          }
-          MSerial.println("");
+             if (v==i) WIFI.print("*");
+             else if (i==0) WIFI.print("-");
+             else WIFI.print(" ");
+           }
+          WIFI.println("");
         }
         nextcmd = "plot "+toOct(a)+" "+toOct(b);
         examine(pc);
@@ -3695,40 +5533,41 @@ void processSerial(int count)
       else if (line.startsWith("tape "))
       { int pos1 = 5;
         String filename = line.substring(pos1, 99);
-	      filename.toUpperCase(); // +"@";
+        filename.toUpperCase(); // +"@";
 
         // absolute tape loader using program data
         if (filename==".BASIC")
         { nextcmd=tapeloader(basictape, sizeof(basictape), ".basic");
-          MSerial.print(">");
+          WIFI.print(">");
           line = "";
           return;
         }
         if (filename==".SOS_XBASIC")
         { nextcmd=tapeloader(sos_xbasictape, sizeof(sos_xbasictape), ".sos_xbasic");
-          MSerial.print(">");
+          WIFI.print(">");
           line = "";
           return;
         }
         if (filename=="LIST")
-        { MSerial.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
-          MSerial.println(".SOS_XBASIC in code memory; length "+toOct(sizeof(basictape)));
+        { WIFI.println(".BASIC in code memory; length "+toOct(sizeof(basictape)));
+          WIFI.println(".SOS_XBASIC in code memory; length "+toOct(sizeof(sos_xbasictape)));
         }
         else if(filename!="LIST")
-          MSerial.println("Tape "+filename+" not found");
+          WIFI.println("Tape "+filename+" not found");
       }
 
-      else if (line.startsWith("unloaddiff "))
+      /*else if (line.startsWith("unloaddiff "))
       { int pos1=11;
         String filename = line.substring(pos1, 99);
-	      filename.toUpperCase();
+        filename.toUpperCase();
         unloadDiffCode(filename);
       }
 
       else if (line.startsWith("unload"))
       { unload((unsigned short *) NULL, 0, 0);
       }
-
+      * /
+      
       else if (line.startsWith("cleareepromsession")) // undocumented
       { EEPROM.write(38, 0);
         EEPROM.write(39, 0);
@@ -3737,35 +5576,20 @@ void processSerial(int count)
         EEPROM.write(57, 0);
         EEPROM.write(58, 0);
         EEPROM.write(59, 0);
-        MSerial.println("Erased EEPROM session; will not load anymore");
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
-        EEPROM.commit();
-#endif
+        WIFI.println("Erased EEPROM session; will not load anymore");
       }
 
       else if (line.startsWith("session "))
       { int pos1 = 8;
         String filename = line.substring(pos1, 99);
-       	filename.toUpperCase();
+        filename.toUpperCase();
                 
-        if (filename=="AUTO")
-        { EEPROM.write(40, 0);
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
-          EEPROM.commit();
-#endif
-        }
-        else if (filename=="MANUAL")
-        { EEPROM.write(40, 1);
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
-          EEPROM.commit();
-#endif
-        }
-        else if (filename=="LIST")
+        if (filename=="LIST")
         { for (int i=1; i<100; i++)
           { String name=getSessionName(-i);
             int len= getSessionLength(getSessionID(name));
             if (name!="" && len>0)
-            MSerial.println(name+" ; length "+String(len)+
+            WIFI.println(name+" ; length "+String(len)+
                            "; id: "+String(getSessionID(name))+
                             "; based on: "+getSessionName(getSessionBase(getSessionID(name))));
           }
@@ -3773,7 +5597,7 @@ void processSerial(int count)
         else
         { int id=getSessionID(filename);
           if (id>0) restoreSession(filename);
-          else MSerial.println("Session "+filename+" not found");
+          else WIFI.println("Session "+filename+" not found");
           nextcmd = "run 2";
         }
       }
@@ -3785,103 +5609,16 @@ void processSerial(int count)
         nextcmd="";
       }       
 
-#ifdef PICOW      
-      else if (line.startsWith("wifi SSID "))
-      { int pos1 = 10;
-        String name = line.substring(pos1, 99);
-        if (name.length()>16)
-        { MSerial.println("wifi name is too long - truncated to 16 characters");
-          name = name.substring(0, 16);
-        }
-        for (int i=0; i<16; i++)
-          EEPROM.write(2+i, 0);
-        for (int i=0; i<name.length(); i++)
-          EEPROM.write(2+i, name.charAt(i));
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
-        EEPROM.commit();
-#endif
-      }
-
-      else if (line.startsWith("wifi password "))
-      { int pos1 = 14;
-        String name = line.substring(pos1, 99);
-        if (name.length()>16)
-        { MSerial.println("wifi password is too long - truncated to 16 characters");
-          name = name.substring(0, 16);
-        }
-        for (int i=0; i<16; i++)
-          EEPROM.write(18+i, 0);
-        for (int i=0; i<name.length(); i++)
-          EEPROM.write(18+i, name.charAt(i));
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
-        EEPROM.commit();
-#endif
-      }
-
-      else if (line.startsWith("wifi forget"))
-      { for (int i=0; i<32; i++)
-          EEPROM.write(2+i, 0);
-#if defined(PICO) || defined(PICOD2) || defined(PICOWS) || defined(ARDUINO_LOLIN32)
-        EEPROM.commit();
-#endif
-      }
-#endif
-
       else if (line.length()>0)
-        MSerial.println("Unknown or mistyped command ignored");
+        WIFI.println("Unknown or mistyped command ignored");
 
-      MSerial.print(">");
+      */
+
+      WIFI.print(">");
       line = "";
     }
   }
 }
-
-#ifdef PICOW
-
-/* ------------------------------------------------- */
-
-void telnetConnected(String ip) {
-  //TELNET_IAC_DONT_LINEMODE
-  telnets.write(255);
-  telnets.write(254);
-  telnets.write(34);  
-  
-  //TELNET_IAC_WILL_ECHO
-  telnets.write(255);
-  telnets.write(251);
-  telnets.write(1);  
-  
-  // TELNET_IAC_DONT_ECHO
-  telnets.write(255);
-  telnets.write(254);
-  telnets.write(1);  
-  
-  /*telnets.write(255);
-  telnets.write(251);
-  telnets.write(3);  
-  
-  telnets.write(255);
-  telnets.write(253);
-  telnets.write(3);  
-  */
-
-  MSerial.print(ip);
-  MSerial.println(" connected.");
-}
-
-void telnetDisconnected(String ip) {
-  MSerial.print(ip);
-  MSerial.println(" disconnected.");
-}
-
-void telnetReconnect(String ip) {
-  MSerial.print(ip);
-  MSerial.println(" reconnected.");
-}
-
-
-/* ------------------------------------------------- */
-
 #endif
 
 void setup() {
@@ -3890,7 +5627,7 @@ void setup() {
 pinMode(TFT_RESET, OUTPUT);
 digitalWrite(TFT_RESET, HIGH);
 
-#ifdef PICOWS
+#if defined(PICOWS) || defined(PICOWS35)
 digitalWrite(TFT_RESET, HIGH);
 delay(100);
 digitalWrite(TFT_RESET, LOW);
@@ -3948,9 +5685,9 @@ delay(100);
 #endif
 
 #ifdef TFT_MOSI
-  pinMode(TFT_MOSI, INPUT);
-  pinMode(TFT_SCK, INPUT);
-  pinMode(TFT_MISO, INPUT);
+  //pinMode(TFT_MOSI, INPUT);
+  //pinMode(TFT_SCLK, INPUT);
+  //pinMode(TFT_MISO, INPUT);
 #endif
 
 #ifdef TFT_LED
@@ -3975,13 +5712,13 @@ delay(100);
   EEPROM.begin(2048); // Note: somehow initialising EEPROM 1st time takes forever; check GUI eeprom size setting
 #endif
 
-#if defined(PICO) || defined(PICOD2)|| defined(PICOWS)
+#if defined(PICO) || defined(PICOD2)|| defined(PICOWS) || defined(PICOWS35)
   EEPROM.begin(4096);
 #endif
 
 #if defined(FEATHERWING_TFT_TOUCH)
   if (!touch.begin())
-    MSerial.println("No touch screen found");
+    Serial.println("No touch screen found");
 #endif
 
 #if defined(FEATHERWING_TFT_TOUCH)
@@ -3989,34 +5726,68 @@ delay(100);
 #endif
 
 #ifdef SD_CS
+#ifdef PICOWS35
+  SPI1.setRX(TFT_MISO);
+  SPI1.setTX(TFT_MOSI);
+  SPI1.setSCK(TFT_SCLK);
+  if (!SD.begin(SD_CS, SPI1))
+  { Serial.println("No SD card found");
+  }
+  else
+  { hasSD = true;
+    Serial.println("Using file tnses1.bin on SD card for session info");
+    SD.begin(SD_CS);
+    myFile = SD.open("tnses1.bin");
+    if (myFile) Serial.println("File size on SD card: "+String(myFile.size()));
+    myFile.close();
+    eepromwords = 10000; // SD card session size limited by RAM for buffers only
+
+    myFile=SD.open("data.bin", FILE_READ);
+    if (!myFile) {
+      Serial.println("Creating disk eeprom image data.bin");
+      myFile = SD.open("data.bin", FILE_WRITE);
+      byte dat[128];
+      memset(dat, 0, 128);
+      for (int i=0; i<65536; i++) myFile.write(dat, 128);
+      myFile.close();
+      Serial.println("Created disk eeprom done");
+    }
+    else
+      myFile.close();
+  }
+#else
   if (!card.init(SPI_HALF_SPEED, SD_CS)) 
-  { MSerial.println("No SD card found");
+  { Serial.println("No SD card found");
   }
   else
   { if (!volume.init(card)) 
-    { MSerial.println("No filesystem on SD card found");
+    { Serial.println("No filesystem on SD card found");
     }
     else
     { //root.openRoot(volume);
       //root.ls(LS_R | LS_DATE | LS_SIZE);
       hasSD = true;
-      MSerial.println("Using file tnses1.bin on SD card for session info");
+      Serial.println("Using file tnses1.bin on SD card for session info");
       SD.begin(SD_CS);
       myFile = SD.open("tnses1.bin");
-      if (myFile) MSerial.println("File size on SD card: "+String((int)myFile.size()));
+      if (myFile) Serial.println("File size on SD card: "+String(myFile.size()));
       myFile.close();
       eepromwords = 10000; // SD card session size limited by RAM for buffers only
     }
   }
 #endif
+#endif
 
   delay(100);
-
-#if defined(PICOWS) || defined(PICOD2) || defined(PICO) 
+//#if defined(PICO)
+//  tft.begin(25000000);
+//  tft.lockTransaction(true);
+//#elif defined(PICOD2)
+//  tft.init(240, 320);
+//#elif 
+#if defined(PICOWS) || defined(PICOD2) || defined(PICO) || defined(PICOWS35)
   tft.init();
   tft.setSwapBytes(true); // needed for pushImage() of TFT_eSPI
-  tft.begin();
-#else
   tft.begin();
 #endif
 
@@ -4030,19 +5801,37 @@ delay(100);
   tft.setRotation(3);
 #endif
 #endif
+
+#ifdef PICOWS35
+  tft.setRotation(0); // bottom half of screen is unused
+  
+  if (! ss.begin(SEESAW_ADDR) || ! sspixel.begin(SEESAW_ADDR)) {
+    Serial.println("Couldn't find seesaw on default address");
+    delay(10);
+  }
+  sspixel.setBrightness(20);
+  sspixel.show();
+  
+  // use a pin for the built in encoder switch
+  ss.pinMode(SS_SWITCH, INPUT_PULLUP);
+  // get starting position
+  encoder_position = ss.getEncoderPosition();
+  delay(10);
+  ss.setGPIOInterrupts((uint32_t)1 << SS_SWITCH, 1);
+  ss.enableEncoderInterrupt();
+#endif
+
   tft.fillScreen(ILI9341_BLACK);
 
-#ifndef PICOW
   Serial.begin(115200);
-#endif
 
 #if defined(WIFI) && !defined(PICOW)
   WIFI.begin(115200);
 #endif
   
-  MSerial.println("Teensy Nova 1210 simulator!"); 
+  Serial.println("Teensy Nova 1210 simulator!"); 
 
-#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS)
+#if !defined(FEATHERWING_TFT_TOUCH) && !defined(ARDUINO_LOLIN32) && !defined(PICOD2) && !defined(PICOWS) && !defined(PICOWS35)
   pinMode(14, OUTPUT); // red/green led, pin controlled analog
   pinMode(15, OUTPUT); // red/green led, pin controlled digital to support TEENSY35
 #endif
@@ -4056,61 +5845,32 @@ delay(100);
 #endif
 
 #ifdef PICOW
-/////// wifi & telnet
   for (int i=0; i<16; i++) ssid[i]=EEPROM.read(2+i);
   ssid[16]=0;
   for (int i=0; i<16; i++) password[i]=EEPROM.read(18+i);
   password[16]=0;
-  if (ssid[0]) {
-    tft.setCursor(0,0);
-    for(int i=0; i<10; i++) 
-      MSerial.println();
-    MSerial.println(ssid);
-    tft.println(ssid);
-    // ssid starting with AP work in access point mode; else station mode
-    if (ssid[0]!='A' || ssid[1]!='P')
-    { WiFi.mode(WIFI_STA);
-      WiFi.begin(ssid, password);
-      int n=1;
-      while(WiFi.status() != WL_CONNECTED) {
-        delay(100);
-        MSerial.print(".");
-        if ((n&31)==0) 
-          MSerial.println();
-        if (n>200) {
-          MSerial.println("Failed to connect");
-          tft.println("Failed to connect");
-          return;
-        }
-        n++;
-      }
-      IPAddress ip = WiFi.localIP();
-      MSerial.println();
-      tft.println(ip);
-      MSerial.print("Telnet Server IP: "); MSerial.println(ip);
-    }
-    else
-    { WiFi.mode(WIFI_AP);
-      WiFi.softAP(ssid, password);
-      // while(!SYSTEM_EVENT_AP_START)
-      delay(100);
-      tft.println(ssid);
-      tft.print("AP IP address: ");
-      tft.println(WiFi.softAPIP());
-      MSerial.print("AP IP address: ");
-      MSerial.println(WiFi.softAPIP());
-    }
-  
-    telnets.onConnect(telnetConnected);
-    telnets.onDisconnect(telnetDisconnected);
-    telnets.onReconnect(telnetReconnect);
-    // telnets.setLineMode(false);
-  
-    if(!telnets.begin()) {
-      MSerial.println("Telnet failed");
-    }
+  if (ssid[0]==0) return;
+
+  WiFi.mode(WIFI_STA);
+  WiFi.setHostname("PicoNova");
+  Serial.printf("Connecting to '%s' with '%s'\n\r", ssid, password);
+  WiFi.begin(ssid, password);
+  int count=0;
+  while (WiFi.status() != WL_CONNECTED) {
+    Serial.print(".");
+    delay(100);
+    if (++count>150) return;
   }
+  Serial.printf("\n\rConnected to WiFi, server at %s:%d\n\r", WiFi.localIP().toString().c_str(), port);
+  server.begin();
+  tft.setTextColor(ILI9341_YELLOW, ILI9341_BLACK);
+  tft.setTextSize(2);
+  tft.setCursor(0,0);
+  tft.print(WiFi.localIP().toString().c_str());
+  tft.println(":4242");
 #endif
+
+  memset((char *)dials, 0, sizeof(dials));
 }
 
 int runtime=0;
@@ -4120,10 +5880,6 @@ int prevSIMINTERVAL=0;
 void loop(void) {
   int count, a;
   int t=micros();
-
-#ifdef PICOW
-  telnets.loop();
-#endif
 
   // update MIPS when changing speed
   if (!novaRunning || prevSIMINTERVAL!=SIMINTERVAL || runtime>10000000)
@@ -4141,10 +5897,20 @@ void loop(void) {
     injectSerialDelay=millis();
     //if (SerialIO) return;
   }
-  else if ((count=MSerial.available()))
+  else if ((count=Serial.available()))
   { processSerial(count);
     //if (SerialIO) return;
   }
+#ifdef WIFI
+  else if (WIFI && (count=WIFI.available()))
+  { hasWIFI = true;
+    processWifi(count);
+    if (SerialIO) return;
+  }
+
+  if (!client) client = server.accept();
+  //if (!client.connected()) client = NULL;
+#endif
 
   // Button presses?
   a=getButtonPress(false);
@@ -4173,7 +5939,7 @@ void loop(void) {
   { simulateNova(SIMINTERVAL);
     instructions += SIMINTERVAL;
     if (!novaRunning) updateImage();
-    //MSerial.println("running: "+toOct(novaRunning));
+    //Serial.println("running: "+toOct(novaRunning));
   }
 
 #ifdef PWRBUTTON
@@ -4221,4 +5987,113 @@ void loop(void) {
     tft.print(toOct(novaAddress)+" "+d+makespc(20-d.length()));
     novaData=s;
   }
+
+#ifdef PICOWS35
+  if (! ss.digitalRead(SS_SWITCH)) 
+  { if (encoder_button==0)
+    { if (novaKey==1)
+      { processButton(49);
+        updateImage();
+        while (!ss.digitalRead(SS_SWITCH));
+        return;
+      }
+      encoder_button=1;
+      Serialwrite(-1); 
+      if (novaRunning)
+      { static int choice=1;
+        if(getSessionName(rootID)==".BASICSESSION") 
+          choice=menu("Run - Basic commands", "\x1bLIST\n\x1bRUN\n\x1b\n\nback\nstop\n", choice, true);
+        else
+          stopNova();
+      }
+      else 
+      { if(getSessionName(rootID)==".RECONDEMO") 
+        { static int choice=1;
+          choice=menu("Reconstruction menu", String("Regular:mem 2006 0|speed 177777|go 2000\n")+
+                                          String("Incremental:speed 177777|mem 2006 1|go 2000|\n")+
+                                          String("Backprojection:speed 177777|mem 2006 2|go 2000|\n")+
+                                          String("Dial is Level:dial 0 2007 200 "+redisplay+"|go "+redisplay+"\n")+
+                                          String("Dial is Window:dial 0 2010 200 "+redisplay+"|go "+redisplay+"\n")+
+                                          String("Disable Dial:dial 0 0\n")+
+                                          String("Reset Level/Window:mem 2007 0|mem 2010 200|go "+redisplay+"\n")+
+                                          String("Setup:setuprecon\n")+
+                                          String("BSHR:speed 14000|bshr_menu\n")+
+                                          String("\nDG Basic menu:dial 0 0|session .basicsample\n")+
+                                          String("About:about\n"), choice, true);
+        }
+        else if(getSessionName(rootID)==".BSHR") 
+        { interpret("speed 14000|bshr_menu", NovaPC, Serial);
+          return;
+        }
+        else
+        { static int choice=1;
+          choice=menu("DG Basic menu", String("Basic:session .basic|autostart\n")+
+                                   String("Pong:session .pong|autostart\n")+
+                                   String("Sample:session .basicsample|autostart\n")+
+                                   String("Restore session:reset|clear 0 177777|restore\n")+
+                                   //String("Store session:store\n\n")+
+                                   String("Dial sets speed:dial 0 1 20\n")+
+                                   String("\nReconstruction menu:session .recondemo\n")+
+                                   String("About:about\n"), choice, true);
+        }
+      }
+    }
+    else
+    { encoder_button=0;
+    }
+  }
+
+  int32_t new_position = ss.getEncoderPosition();
+  if (encoder_position != new_position) {
+    int delta = new_position - encoder_position;
+    encoder_position = new_position;
+
+    // change the neopixel color
+    sspixel.setPixelColor(0, Wheel(new_position & 0xFF));
+    sspixel.show();
+
+    // dial address range startaddress
+    if (dials[0][0] > 1) 
+    { if (dials[0][2] && !novaRunning)
+      { int s = examine(dials[0][0])+delta;
+        if (s<0) s=0;
+        deposit(dials[0][0], s%dials[0][1]);
+        SerialIO=true;
+        tft.setTextColor(CL(128,255,0), CL(40,75,125));
+        tft.setCursor(100, 229);
+        String d="Value " + String(s%dials[0][1]) + "         ";
+        tft.print(d);    
+        startNova(dials[0][2]);
+      } 
+      else
+      { //int haltAddress=stopNova();
+        //deposit(dials[0][0], encoder_position % dials[0][1]);
+        //examine(haltAddress);
+        //continueNova();
+      }
+    }
+    else if (dials[0][0]==1) 
+    { SIMINTERVAL = 1<<((encoder_position+65536) % dials[0][1]);
+      tft.setTextColor(CL(128,255,0), CL(40,75,125));
+      tft.setCursor(100, 229);
+      String d="Speed " + String(SIMINTERVAL) + "         ";
+      tft.print(d);    
+    }
+#endif
+  }
 }
+
+#ifdef PICOWS35
+uint32_t Wheel(byte WheelPos) {
+  WheelPos = 255 - WheelPos;
+  if (WheelPos < 85) {
+    return sspixel.Color(255 - WheelPos * 3, 0, WheelPos * 3);
+  }
+  if (WheelPos < 170) {
+    WheelPos -= 85;
+    return sspixel.Color(0, WheelPos * 3, 255 - WheelPos * 3);
+  }
+  WheelPos -= 170;
+  return sspixel.Color(WheelPos * 3, 255 - WheelPos * 3, 0);
+}
+#endif
