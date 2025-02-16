@@ -8,8 +8,9 @@
 -- 20250126 2017 loads image viewfn from SD card; load/save to SD card through blocks ff00 up
 -- 20250127 added more input sinogram options 1-7
 -- 20250128 added Lemay filter (WIP)
+-- 20250214 Use 16% faster GSTRETCHADD with autoinc.target; better rounding (use 128.5)
 
-dofile ('e:\\software\\nova1200-restoration\\lua_assembler\\telnet_nova.lua')
+dofile ('c:\\software\\nova1200-restoration\\lua_assembler\\telnet_nova.lua')
 
 config = {
 -- set with mem
@@ -73,8 +74,6 @@ LABEL begin
   JSR ASETC
 
 LABEL loopprojs
-  SET0 imagepointer labels.image
-  
   LDA 0 variable.curangle
   LDA 2 string('processing angle %0\n')
   MESSAGE
@@ -104,8 +103,8 @@ LABEL loopprojs
   MOV 0 0 NOLOAD SL CZ SZC
   COM 1 1
   REPEAT 3 LSL
-  STA 0 variable.currstepx
-  STA 1 variable.currstepx1
+  STA 0 variable.dx
+  STA 1 variable.dx1
     
   // compute 32 bit stepy (sin..)
   LDA 3 constant(labels.sintable)
@@ -177,27 +176,17 @@ LABEL interpolatedone
   LDA 0 constant(1)
   WRITELED
 
+  LDA 0 constant(labels.image-1)
+  STA 0 autoinc.target 
   SET0 rows 80
 LABEL looprows
   
   // stretch projection data
   SET0 ARG labels.projectionh
-  LDA 0 variable.currstepx
-  LDA 1 variable.currstepx1
-  STA 0 variable.dx
-  STA 1 variable.dx1
   SET0 counter 80
   LDA 0 variable.curroffset
   LDA 1 variable.curroffset1
-  LDA 2 constant(labels.projection4)
-  JSR GSTRETCH
-  
-  // add to image row
-  SET0 ARG 80
-  LDA 2 constant(labels.projection4)
-  LDA 1 variable.imagepointer
-  JSR AADDA
-  STA 1 variable.imagepointer
+  JSR GSTRETCHADD
 
   // add stepy to offset
   LDA 0 variable.curroffset
@@ -697,28 +686,7 @@ LABEL lemay
   //DW math.round(65536*0.0008381)
   //DW math.round(65536*0.0007306)
   //-----------------
-    
-  //-------------------
-  //Add short array to short array
-  //AC2 source data pointer
-  //AC1 destination data pointer
-  //ARG count
-LABEL AADDA
-  STA 3 variable.AUTO
-  MOV 1 3
-LABEL AADDA2
-  LDA 0 AC2
-  LDA 1 AC3
-  ADD 0 1
-  STA 1 AC3
-  INC 2 2
-  INC 3 3
-  DSZ variable.ARG
-  JMP AADDA2
-  MOV 3 1
-  JMP variable.AUTO IND
-  //-------------------
-       
+           
   //-------------------
   //Copy short array to short array
   //AC2 source data pointer
@@ -791,29 +759,36 @@ LABEL AADDC2
   MOV 3 1
   JMP variable.AUTO IND
   //-------------------
-
-//-------------------
-  // Stretch data, array ARG must be guarded with many zeros for too low or too high pixel indices, e.g. 128 256 128 allocation
-  // AC2[i] = ARG[j], where j= I*scale+offset
+ 
+  //-------------------
+  // Stretch data and add to target, array ARG must be guarded with many zeros for too low or too high pixel indices, e.g. 128 256 128 allocation
+  // *autoinc.target += ARG[j], where j= I*scale+offset
+  // autoinc.target points one prior to image (need to set once only)
+  // ARG projection data
   // 0 subpixel address, increases with dx
   // 1 pixel address, increased with dx1  
-  // 2 is destination pointer
   // counter is number of points (destroyed)
-LABEL GSTRETCH
-  STA 3  variable.AUTO
-LABEL GSTRETCH1
+  // 23 cycles
+ 
+LABEL GSTRETCHADD
+  STA 3 variable.AUTO
+LABEL GSTRETCHADD1
   LDA 3 variable.ARG
   ADD 1 3   // reg1 contains offset address
-  LDA 3 AC3 // copy data
+  LDA 3 AC3 // get projection data and accumulate
+
+  LDA 2 IND autoinc.target
+  ADD 2 3
+  LDA 2 autoinc.target
   STA 3 AC2
-  INC 2 2
+  
   LDA 3 variable.dx // step subpixel source address
+  LDA 2 variable.dx1
   ADD 3 0 CZ SZC
   INC 1 1
-  LDA 3 variable.dx1
-  ADD 3 1
+  ADD 2 1
   DSZ variable.counter
-  JMP GSTRETCH1
+  JMP GSTRETCHADD1
   JMP variable.AUTO IND
   //-------------------
 
@@ -829,7 +804,7 @@ ORG octal(0400)
 // location of first pixel in projection array
 // 80x80 image output; input is scaled to 256 words -> center at 128; all values scaled by 16 bit fixed point floats
 LABEL offsets
-  REPEAT 180 DW math.round(64*(-40*config.pscale*math.cos((pc-labels.offsets)*math.pi/180)-40*config.pscale*math.sin((pc-labels.offsets)*math.pi/180)+128))
+  REPEAT 180 DW math.round(64*(-40*config.pscale*math.cos((pc-labels.offsets)*math.pi/180)-40*config.pscale*math.sin((pc-labels.offsets)*math.pi/180)+128.5))
 
 // scaled sin(angle) used to calculate stepx and stepy
 LABEL sintable
@@ -863,8 +838,8 @@ LABEL projection4
   
   ORG labels.endofcode
   
-]], false) -- false omits go command
+]], true) -- false omits go command
 
-writeport(7, t, 100)
+writeport(32, t, 100)
 --writetelnet("192.168.1.234", t, 100)
 map()

@@ -15,6 +15,8 @@
 -- 20250117 Fixed string(); added config table; math.log2; REPEAT N now expects lua expression as N; save tables for debugging
 -- 20250119 Added DD to generate doublewords
 -- 20250120 Removed immediate upload and disabled linking, map() function including constants
+-- 20250215 Added %r to REPEAT gives sequence 1..N
+
 
 -- memory locations for numbers and string generation
 local c_number_place = 0x40       -- max 192 numbers, variables, long references etc
@@ -257,7 +259,7 @@ function assemble(start, code, go, makehex)
       local chunk = loadstring('return '..kw[2])
       setfenv(chunk, {address=pc, pc=pc, math=math, labels=labels, octal=octal, bitand=bitand, constant=constant, variable=variable, variables=variables, autoinc=autoinc, string=_string, config=config})
       w = chunk()
-      for i=1, w do table.insert(code, k+i-1, table.concat(kw, ' ', 3)) end
+      for i=1, w do table.insert(code, k+i-1, (string.gsub(table.concat(kw, ' ', 3), '%%r',  i))) end
       kw = split(code[k], ' ')
     end
     
@@ -296,7 +298,7 @@ function assemble(start, code, go, makehex)
       end
     end
 
-end
+  end
   
   -- first pass: get label statements
   for k,v in ipairs(code) do 
@@ -410,16 +412,16 @@ end
           local chunk = loadstring('return '..kw[j])
           setfenv(chunk, {address=pc, pc=pc, math=math, labels=labels, octal=octal, bitand=bitand, constant=constant, variable=variable, variables=variables, autoinc=autoinc, string=_string, config=config})
           local a = pcrelative(chunk(), pc)
-	        if string.match(kw[j], 'string.+') then a=bitand(a, 0xff) end
+	  if string.match(kw[j], 'string.+') then a=bitand(a, 0xff) end
           w = w + a 
           break
         elseif loadstring('return '..table.concat(kw, ' ', j)) then
           local chunk = loadstring('return '..table.concat(kw, ' ', j))
           setfenv(chunk, {address=pc, pc=pc, math=math, labels=labels, octal=octal, bitand=bitand, constant=constant, variable=variable, variables=variables, autoinc=autoinc, string=_string, config=config})
-	        local a = pcrelative(chunk(), pc)
-	        if string.match(kw[j], 'string.+') then a=bitand(a, 0xff) end
+	  local a = pcrelative(chunk(), pc)
+	  if string.match(kw[j], 'string.+') then a=bitand(a, 0xff) end
           w = w + a
-	        break
+	  break
         else
           error('error '..v)
         end
@@ -566,6 +568,7 @@ end
     persistence.store('c:\\temp\\variables.dat', variables)
     persistence.store('c:\\temp\\labels.dat', labels)
     persistence.store('c:\\temp\\constants.dat', constants)
+    persistence.store('c:\\temp\\novamem.dat', nova_memory)
     
     return t
   end
@@ -706,4 +709,54 @@ function map()
   
   print()
   print("page zero use (of 192):", total)
+end
+
+
+function makesession()
+  --local mem=persistence.load('c:\\temp\\novamem.dat')
+  
+  mem={}
+  mem[5]=1
+  mem[6]=2
+  mem[7]=3
+  mem[8]=3
+  mem[9]=3
+  mem[10]=3
+  mem[11]=3
+  mem[12]=3
+  mem[13]=3
+  mem[20]=5
+  mem[21]=6
+  
+  local prev=65537
+  local block={address=0, len=0, data={}}
+  
+  for i=0, 32767 do
+    if not mem[i] then mem[i]=0 end
+  end
+  
+  for i=0, 31 do
+    if block.len==0 or #block.data==0 then 
+      block.address=i 
+      prev = mem[i]
+    end
+    
+    table.insert(block.data, mem[i])
+    
+    if mem[i]==prev then 
+      block.len=block.len+1
+    else
+      if block.len<2 then 
+        block.len=0 
+        prev = 65537
+      else
+        for i=1, #block.data-block.len do print(block.data[i]) end
+        print('constant', block.address, block.address+block.len-1, prev)
+        block.len=0
+        block.data={}
+      end
+    end
+  end
+  print('constant', block.address, block.address+block.len-1, prev)
+  for i=1, #block.data-block.len do print(block.data[i]) end
 end

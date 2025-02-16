@@ -101,6 +101,8 @@
 // mvh 20250115 MESSAGE shows correct string with eg %0 subsituted on first LCD line
 // mvh 20250117 redone MESSAGE add %f is %1.%0 %4 or %l is %1%0 as 32 bits; added sinogram_2
 // mvh 20250119 Added dump10 command; lcd darkgreen; MESSAGE no ; on lcd
+// mvh 20250215 Report time and Nova time between startNova and HALT
+// mvh 20250216 Also report on LCD
 
 // TODO: mode to list serial reply in hex
 // Do I need to keep @ as cancel for direct mode? 
@@ -1038,9 +1040,14 @@ void continueNovaSw(int sw)
   novaRunning=true;
 }              
 
+int startrun;
+int teensytime;
+
 // start at address a
 void startNova(unsigned int a)
-{ writeData(a);
+{ startrun = millis();
+  teensytime =0;
+  writeData(a);
   writeInst(0xfb);
   WriteReg(11, 4);
   wait();
@@ -3660,21 +3667,26 @@ void loop() {
       if (kbmode==3) haltInstruction=0; // allow key 9 to stop running
 
       if (haltInstruction==INFO)
-      { lcdPrintDebug();
+      { int t = millis();
+        lcdPrintDebug();
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
       }
       else if (haltInstruction==PUTC) // write character
-      { byte b=haltA0&255;
+      { int t = millis();
+        byte b=haltA0&255;
         Serial.write(b);
         putLCD(b);
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
       }
       else if (haltInstruction==MESSAGE) // write character string from address in A2
-      { int a = examineAC(2);
+      { int t = millis();
+        int a = examineAC(2);
         char byteArray[80];
         for (int i=0; i<40; i++)
         { unsigned short s=examine(a+i);
@@ -3728,12 +3740,13 @@ void loop() {
         for (int i=0; i<40; i++) lcdwrite(' ');
         lcdsetCursor(0, 0);
         lcdprint(str);
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
       }
       else if (haltInstruction==WRITELED)
-      { 
+      { int t = millis();
 #ifndef TEENSY
         digitalWrite(6, 1);  // poor attempt to keep LCD tidy as LED doubles as LCD2 select
         digitalWrite(A2, 1);
@@ -3751,17 +3764,20 @@ void loop() {
         delay(50); // must be shorter than 100 ms above!
         digitalWrite(13, 0);
 #endif
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
       }
       else if (haltInstruction==READBLOCK) // stored BIGENDIAN in eeprom
-      { unsigned int A2=examineAC(2);
+      { int t = millis();
+        unsigned int A2=examineAC(2);
         gpio(1);
         readBlockfromEEPROM(haltA0, A2);
         depositAC(0, haltA0+1);
         depositAC(2, A2+64);
         gpio(0);
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
@@ -3775,31 +3791,37 @@ void loop() {
         continue;
       }
       else if (haltInstruction==WRITEBLOCK) // read BIGENDIAN from eeprom
-      { unsigned int A2=examineAC(2);
+      { int t = millis();
+        unsigned int A2=examineAC(2);
         gpio(4);
         writeBlocktoEEPROM(haltA0, A2);
         gpio(0);
         depositAC(0, haltA0+1);
         depositAC(2, A2+64);
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
       }
       else if (haltInstruction==GPIO)     // GPIO through MCP20008
-      { gpio(haltA0);
+      { int t = millis();
+        gpio(haltA0);
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
       }
       else if (haltInstruction==DELAY)   // delay on arduino
-      { examineAC(1); // show ac1 on lights
+      { int t = millis();
+        examineAC(1); // show ac1 on lights
         delay(haltA0);
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
       }
       else if (haltInstruction==ADC)   // adc on teensy
-      { 
+      { int t = millis();
 #ifdef TEENSY
         pinMode(A0, INPUT);
         depositAC(0, analogRead(A0));
@@ -3807,6 +3829,7 @@ void loop() {
         pinMode(A1, INPUT);
         depositAC(0, analogRead(A1));
 #endif
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
         continue;
@@ -3815,7 +3838,8 @@ void loop() {
       { break; // handled in serial and keyboard code
       }
       else if (haltInstruction==GRMODE)
-      { int mode = examineAC(0);
+      { int t = millis();
+        int mode = examineAC(0);
         graddress = ((mode&1)<<16)+examineAC(1);
         grzoom = (mode&0x1e)>>1;
         int grclear = (mode&0x20);
@@ -3832,11 +3856,13 @@ void loop() {
         if (grclear) 
         { tft.fillRect(0, 0, 320, 240, ILI9341_BLACK);
         }
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
       }
       else if (haltInstruction==GRDISPLAY)
-      { int val = examineAC(0);
+      { int t = millis();
+        int val = examineAC(0);
         int rep = examineAC(1);
         if (rep==0) rep=1;
         int addr= val;
@@ -3865,11 +3891,13 @@ void loop() {
           if (graddress>240*320) graddress=0;
         }
         if (rep>1) depositAC(0, addr+rep);
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
       }
       else if (haltInstruction==GRNEXT)
-      { while(1)
+      { int t= millis();
+        while(1)
         { graddress += grzoom;
           if((graddress%320)<grzoom) 
           { graddress = (graddress/320 + grzoom-1) * 320;
@@ -3877,12 +3905,21 @@ void loop() {
           }
         }
         if (graddress>240*320) graddress=0;
+        teensytime += t-millis();
         examine(haltAddress);
         continueNova();
       }
       else if (haltInstruction==HALT)
-      { Serial.println("HALT at address: "+toOct(haltAddress));
+      { int t = millis()-startrun;
+        Serial.println("HALT at address: "+toOct(haltAddress)+ " ; Total runtime(ms): " + String(t)+ " ; Nova runtime(ms): " + String(t+teensytime));
         Serial.print(">");
+        lcdsetCursor(0,1);
+        lcdprint(makespc(40));
+        lcdsetCursor(0,1);
+        lcdprint("Runtime: "); 
+        lcdprint(t); 
+        lcdprint(" Nova: "); 
+        lcdprint(t+teensytime); 
         SerialIO=false;
         return; // Normal halt: nova ready for input
       }
