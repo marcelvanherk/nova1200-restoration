@@ -9,6 +9,7 @@
 -- 20250127 added more input sinogram options 1-7
 -- 20250128 added Lemay filter (WIP)
 -- 20250214 Use 16% faster GSTRETCHADD with autoinc.target; better rounding (use 128.5)
+-- 20250218 Added GSTRETCHADDFAST
 
 dofile ('c:\\software\\nova1200-restoration\\lua_assembler\\telnet_nova.lua')
 
@@ -768,25 +769,77 @@ LABEL AADDC2
   // 0 subpixel address, increases with dx
   // 1 pixel address, increased with dx1  
   // counter is number of points (destroyed)
-  // 23 cycles
+  // unrolled: 13 cycles per pixel + 18/16 cycles overhead (15.25 for 8 times, 14.1 for 16 times unroll)
+ 
+// step subpixel address and store integer part
+MACRO GS1 STA 1 variable.temp%1|ADD 3 0 CZ SZC|INC 1 1|ADD 2 1
+
+// load projection and add to AC2[i]
+MACRO GS2 LDA 1 IND variable.temp%1|LDA 3 %1 AC2|ADD 1 3|STA 3 %1 AC2
+
+LABEL GSTRETCHADDFAST
+  STA 3 variable.AUTO
+  LDA 3 variable.ARG
+  ADD 3 1   // reg1 contains offset address
+  
+  // loop unrolled 16 times, adjust counter
+  LDA 3 variable.counter
+  REPEAT 4 MOV 3 3 CZ SR
+  STA 3 variable.counter
+    
+LABEL GSTRETCHADDFAST1
+  // 4 cycles
+  LDA 3 variable.dx // step subpixel source address
+  LDA 2 variable.dx1
+  
+  // 5 cycles per pixel
+  REPEAT 16 GS1 %r
+  
+  // 4 cycles
+  STA 1 variable.temp
+  LDA 2 autoinc.target
+
+  // 8 cycles per pixel
+  REPEAT 16 GS2 %r
+
+  // 10 cycles
+  LDA 1 constant(16)
+  ADD 1 2
+  STA 2 autoinc.target
+  LDA 1 variable.temp
+  DSZ variable.counter
+  JMP GSTRETCHADDFAST1
+  
+  JMP variable.AUTO IND
+  //-------------------
+
+  //-------------------
+  // Stretch data and add to target, array ARG must be guarded with many zeros for too low or too high pixel indices, e.g. 128 256 128 allocation
+  // *autoinc.target += ARG[j], where j= I*scale+offset
+  // autoinc.target points one prior to image (need to set once only)
+  // ARG projection data
+  // 0 subpixel address, increases with dx
+  // 1 pixel address, increased with dx1  (in ac3 during loop)
+  // counter is number of points (destroyed)
+  // 20 cycles, not unrolled
  
 LABEL GSTRETCHADD
   STA 3 variable.AUTO
-LABEL GSTRETCHADD1
   LDA 3 variable.ARG
-  ADD 1 3   // reg1 contains offset address
-  LDA 3 AC3 // get projection data and accumulate
+  ADD 1 3
+LABEL GSTRETCHADD1
+  LDA 1 AC3 // get projection data and accumulate
 
   LDA 2 IND autoinc.target
-  ADD 2 3
-  LDA 2 autoinc.target
-  STA 3 AC2
-  
-  LDA 3 variable.dx // step subpixel source address
-  LDA 2 variable.dx1
-  ADD 3 0 CZ SZC
-  INC 1 1
   ADD 2 1
+  LDA 2 autoinc.target
+  STA 1 AC2
+  
+  LDA 1 variable.dx // step subpixel source address
+  LDA 2 variable.dx1
+  ADD 1 0 CZ SZC
+  INC 3 3
+  ADD 2 3
   DSZ variable.counter
   JMP GSTRETCHADD1
   JMP variable.AUTO IND

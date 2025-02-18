@@ -108,7 +108,7 @@ LABEL looprows
   SET0 counter 80
   LDA 0 variable.curroffset
   LDA 1 variable.curroffset1
-  JSR GSTRETCHADD
+  JSR GSTRETCHADDFAST
   
   // add stepy to offset
   LDA 0 variable.curroffset
@@ -292,7 +292,7 @@ MACRO GS1 STA 1 variable.temp%1|ADD 3 0 CZ SZC|INC 1 1|ADD 2 1
 // load projection and add to AC2[i]
 MACRO GS2 LDA 1 IND variable.temp%1|LDA 3 %1 AC2|ADD 1 3|STA 3 %1 AC2
 
-LABEL GSTRETCHADD
+LABEL GSTRETCHADDFAST
   STA 3 variable.AUTO
   LDA 3 variable.ARG
   ADD 3 1   // reg1 contains offset address
@@ -302,7 +302,7 @@ LABEL GSTRETCHADD
   REPEAT 4 MOV 3 3 CZ SR
   STA 3 variable.counter
     
-LABEL GSTRETCHADD1
+LABEL GSTRETCHADDFAST1
   // 4 cycles
   LDA 3 variable.dx // step subpixel source address
   LDA 2 variable.dx1
@@ -323,7 +323,7 @@ LABEL GSTRETCHADD1
   STA 2 autoinc.target
   LDA 1 variable.temp
   DSZ variable.counter
-  JMP GSTRETCHADD1
+  JMP GSTRETCHADDFAST1
   
   JMP variable.AUTO IND
   //-------------------
@@ -338,11 +338,11 @@ LABEL GSTRETCHADD1
   // counter is number of points (destroyed)
   // 20 cycles, not unrolled
  
-LABEL GSTRETCHB
+LABEL GSTRETCHADD
   STA 3 variable.AUTO
   LDA 3 variable.ARG
   ADD 1 3
-LABEL GSTRETCHB1
+LABEL GSTRETCHADD1
   LDA 1 AC3 // get projection data and accumulate
 
   LDA 2 IND autoinc.target
@@ -356,7 +356,7 @@ LABEL GSTRETCHB1
   INC 3 3
   ADD 2 3
   DSZ variable.counter
-  JMP GSTRETCHB1
+  JMP GSTRETCHADD1
   JMP variable.AUTO IND
   //-------------------
 

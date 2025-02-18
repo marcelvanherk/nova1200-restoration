@@ -105,6 +105,7 @@ Marcel van Herk, 26 January 2025   - Substitute eg %0 in command line; echo comm
 Marcel van Herk, 26 January 2025   - READBLOCK/WRITEBLOCK ff00/ffff reads/writes SD file 000000-000377; close with READBLOCK 0; bshr demo; default speed up
 Marcel van Herk, 27 January 2025   - Expand to 4 sinograms
 Marcel van Herk, 29 January 2025   - Added C version of Nova reconstruction (0.3s on pico2)
+Marcel van Herk, 18 February 2025  - Fixed rounding of C version
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -4540,7 +4541,7 @@ void interpret(String line, int pc, Stream &Ser)
     int stepx[projections];
     int stepy[projections];
     for (int i=0; i<projections; i++)
-    { offsets[i] = 65536.0*(-40.0*pscale*cos(i*piprojs) - 40.0*pscale*sin(i*piprojs)+128.0);
+    { offsets[i] = 65536.0*(-40.0*pscale*cos(i*piprojs) - 40.0*pscale*sin(i*piprojs)+128.5);
       stepx[i]   = 65536.0*(1.0  *pscale*cos(i*piprojs));
       stepy[i]   = 65536.0*(1.0  *pscale*sin(i*piprojs));
     }
