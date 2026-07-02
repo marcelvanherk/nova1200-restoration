@@ -103,6 +103,7 @@
 // mvh 20250119 Added dump10 command; lcd darkgreen; MESSAGE no ; on lcd
 // mvh 20250215 Report time and Nova time between startNova and HALT
 // mvh 20250216 Also report on LCD
+// mvh 20260701 Added missing wait() to continueNova, seems to fix reconstruction hangs
 
 // TODO: mode to list serial reply in hex
 // Do I need to keep @ as cancel for direct mode? 
@@ -1020,6 +1021,7 @@ unsigned int stopNova(void)
 void continueNova(void)
 { writeInst(0xfb);
   WriteReg(11, 6);
+  wait();
   WriteReg(11, 0);
   wait();
   novaRunning=true;
@@ -1034,6 +1036,7 @@ void continueNovaSw(int sw)
   wait();
   writeInst(0xfb);
   WriteReg(11, 6);
+  wait();
   WriteReg(11, 0);
   wait();
   WriteReg(10, 8);

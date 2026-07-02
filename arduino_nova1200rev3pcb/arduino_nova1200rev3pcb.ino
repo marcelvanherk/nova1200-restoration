@@ -41,11 +41,17 @@
 // 20230210: Removed TEENSY define; stop support for original Nano, TEENSY is default
 // 20230211: Updated telnetstream; allow AP mode (use SSID starting with AP)
 // 20250112: Fix deviceaddress in tape list command; reset line on ctrl-c; eeprom also lists ascii
+// 20250117: Added option to display on external ILI9341
+// 20250117: 'eeprom' blocks 0170000-0170547 contain 180 x 128 sinogram (from emiprojector.lua)
+// mvh 20250117 redone MESSAGE add %f is %1.%0 %4 or %l is %1%0 as 32 bits; added sinogram_2
+// mvh 20260701 Added missing wait() to continueNova, seems to fix reconstruction hangs
 
 //#define RP2040    // Cytron Maker RP2040 (3.3V)
 #define NANOESP32   // or Arduino Nano ESP32 (3.3V)
                     // default Teensy3.2 (5V) or Teensy4.0 (3.3V)
 // With 3V3 boards modify old PCB to protect lightint & I2c pins
+
+#define SIMULATED
 
 #ifdef NANOESP32
 #include "TelnetStream.h"
@@ -69,7 +75,24 @@ MergedStreams mergedStreams(Serial, telnets);
 #define SCLK A9
 #endif
 
-// graphics library
+#ifdef RP2040
+#define SELR1 D5
+#define FIRSTD D26
+#define FIRSTA D8
+#define LASTA D17
+#elif defined(NANOESP32)
+#define SELR1 D5
+#define FIRSTD A0
+#define FIRSTA D8
+#define LASTA D10
+#else
+#define SELR1 3
+#define FIRSTD 26
+#define FIRSTA 6
+#define LASTA 8
+#endif
+
+// graphics library for small screens
 #if defined(RP2040) || defined(NANOESP32)
 U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C u8g2(U8G2_R0);
 #else
@@ -77,7 +100,17 @@ U8G2_SSD1306_128X32_UNIVISION_F_SW_I2C u8g2(U8G2_R0, SCLK, SDA);
 #endif
 U8G2LOG u8g2log;
 
-#define SIMULATED
+// graphics library for external ILI9341 as color display connected to LCD connector DC=A0,CS=D0,SCK=D1,MOSI=D2
+#include "Adafruit_ILI9341.h"
+#define TFTDC FIRSTA
+#define TFTCS FIRSTD
+#define TFTSCK FIRSTD+1
+#define TFTMOSI FIRSTD+2
+#define CL(a, b, c) (((a>>3)<<11)+((b>>2)<<5)+(c>>3))
+Adafruit_ILI9341 tft = Adafruit_ILI9341(TFTCS, TFTDC, TFTMOSI, TFTSCK);
+int grzoom=1;
+int graddress=0;
+int grmono=0;
 
 int NovaPC=0;
 
@@ -424,24 +457,6 @@ Register list on 74LS173 chips:
 7 = write control H (was 11)
 */
 
-
-#ifdef RP2040
-#define SELR1 D5
-#define FIRSTD D26
-#define FIRSTA D8
-#define LASTA D17
-#elif defined(NANOESP32)
-#define SELR1 D5
-#define FIRSTD A0
-#define FIRSTA D8
-#define LASTA D10
-#else
-#define SELR1 3
-#define FIRSTD 26
-#define FIRSTA 6
-#define LASTA 8
-#endif
-
 // write Nova Data or Instruction register nibble to 74LS173 register
 void WriteReg(byte chip, byte value) {
   value=~value;      // negate value to make active high
@@ -679,6 +694,7 @@ void continueNova(void)
 #endif
   writeInstReg(0xfb);
   WriteReg(7, 6);
+  wait();
   WriteReg(7, 0);
   wait();
   novaRunning=true;
@@ -697,6 +713,7 @@ void continueNovaSw(int sw)
   wait();
   writeInstReg(0xfb);
   WriteReg(7, 6);
+  wait();
   WriteReg(7, 0);
   wait();
   novaRunning=true;
@@ -1049,7 +1066,10 @@ String printIOT(unsigned int tr, unsigned int sk) {
 #define SKIPDONE   067377 // skip when character available
 #define DELAY      067277 // Delay A0 ms, showing A1 on lights
 #define ADC        067177 // Read A0 from teensy
-// 6 are open 06[3,7][1-3]77 except 063077; maybe add 
+#define GRMODE     063377 // A0 = MONO/ZOOM/CLEAR/HIGHADDRESS A1 = ADDRESS
+#define GRDISPLAY  063277 // A0 = Pixel value/addr A1 = count (A0 is address for count>1)
+#define GRNEXT     063177 
+// 2 are open 06[3,7][1-3]77 except 063077; maybe add 
 // HWMUL, HWDIV, DEVICESEL, SKIPBUSYZ (always skip)
 
 // Disassemble entire instruction and return
@@ -1070,6 +1090,9 @@ String printDisas(unsigned int v, int octalmode) {
 //  else if (v==SKIPBUSYZ)        s+=(".SKIPBUSYZ");
   else if (v==DELAY)            s+=(".DELAY");
   else if (v==ADC)              s+=(".ADC");
+  else if (v==GRMODE)           s+=(".GRMODE");
+  else if (v==GRDISPLAY)        s+=(".GRDISPLAY");
+  else if (v==GRNEXT)           s+=(".GRNEXT");
   else if (v==HALT)             s+=("HALT");    //doc0, 4 bits free
   else if ((v&0xe73f)==0x663f)  s+=(".HALT");   // unused system call
 
@@ -1605,17 +1628,34 @@ void tests(int func)
   }
 }
 
+#include "nova_sinogram1.h"
+#include "nova_sinogram2.h"
+
 // read 128 byte block from external EEPROM to Nova memory A
 void readBlockfromEEPROM(int block, unsigned int A)
 { writeColor(2);
-  int deviceaddress = 0x50;
-  if (block>511) deviceaddress+=4;
-  unsigned int address=block*128; // overflow is OK needs 16 bit
-  unsigned char buffer[16];
-  for(int j=0; j<8; j++)
-  { i2c_eeprom_read_buffer(deviceaddress, address+j*16, buffer, 16);
-    for (int i=0; i<8; i++)
-    { deposit(A+i+j*8, (buffer[i*2]<<8)|buffer[i*2+1]);
+  if (block>=0xf200)
+  { unsigned int address=(block-0xf200)*64;
+    for (int i=0; i<64; i++)
+    { deposit(A+i, nova_sinogram2[i+address]);
+    }
+  }  
+  else if (block>=0xf000)
+  { unsigned int address=(block-0xf000)*64;
+    for (int i=0; i<64; i++)
+    { deposit(A+i, nova_sinogram1[i+address]);
+    }
+  }  
+  else 
+  { int deviceaddress = 0x50;
+    if (block>511) deviceaddress+=4;
+    unsigned int address=block*128; // overflow is OK needs 16 bit
+    unsigned char buffer[16];
+    for(int j=0; j<8; j++)
+    { i2c_eeprom_read_buffer(deviceaddress, address+j*16, buffer, 16);
+      for (int i=0; i<8; i++)
+      { deposit(A+i+j*8, (buffer[i*2]<<8)|buffer[i*2+1]);
+      }
     }
   }
   writeColor(0);
@@ -2874,7 +2914,16 @@ void processSerial(int count)
         for (short i=0; i<128; i++)
         { String s;
           int v;
-          v=i2c_eeprom_read_byte(deviceaddress, a*128+i);
+          if (a>=0xf200) 
+          { v = nova_sinogram2[(a-0xf200)*64+i/2];
+            if (i&1) v = v>>8; else v = v&255;
+          }
+          if (a>=0xf000) 
+          { v = nova_sinogram1[(a-0xf000)*64+i/2];
+            if (i&1) v = v>>8; else v = v&255;
+          }
+          else     
+            v = i2c_eeprom_read_byte(deviceaddress, a*128+i);
           s = toHex2(v);
           t = t + char(max(v&255,32));
           if ((i&15)==15) 
@@ -3132,6 +3181,35 @@ void processSerial(int count)
           Serial.println("Tape "+filename+" not found");
       }
 
+      else if (line.startsWith("grmode "))
+      { int pos1 = 7;
+        unsigned short a = readOct(line, pos1);
+        graddress = 0;
+        grzoom = (a&0x1e)>>1;
+        int grclear = (a&0x20);
+        grmono = (a&0xffc0)>>6;
+        Serial.println(grmono);
+        Serial.println(grzoom);
+        if (grclear) 
+        { tft.fillRect(0, 0, 320, 240, ILI9341_BLACK);
+        }
+      }
+
+      else if (line.startsWith("grdisplay "))
+      { int pos1 = 10;
+        int val = readOct(line, pos1);
+        if (grmono)
+        { if (val>32767) val = val-65536;
+          val = val / grmono;
+          if (val<0) val=0;
+          if (val>255) val=255;
+          val = CL(val, val, val);
+        }
+        tft.fillRect(graddress%320, 0+(graddress/320), grzoom, grzoom, val);
+        graddress += grzoom;
+        if((graddress%320)<grzoom) graddress = (graddress/320 + grzoom-1) * 320;
+      }
+
 #ifdef NANOESP32      
       else if (line.startsWith("wifi SSID "))
       { int pos1 = 10;
@@ -3295,6 +3373,11 @@ void setup() {
 #else
   display(4, "NOVA 1210");
 #endif
+
+  // externally connected ILI9341 board
+  tft.begin();
+  tft.setRotation(3);
+  tft.fillScreen(ILI9341_RED);
 
 #ifndef RP2040
   digitalWrite(13, LOW);
@@ -3470,29 +3553,49 @@ void loop(void) {
       }
       else if (haltInstruction==MESSAGE) // write character string from address in A2
       { int a = examineAC(2);
-        bool flag=false;
+        char byteArray[80];
         for (int i=0; i<40; i++)
         { unsigned short s=examine(a+i);
-          unsigned short s2=examine(a+i+1);
-          byte b = s>>8;
-          if (b==0) break;
-          if (!flag)
-          { if (b=='%') { Serial.print(String((short)examineAC(s&3))); flag=true; }
-            else Serial.write(b);
-            //u8g2log.write(b);
-          }
-          else
-            flag=false;
-          b = s&255;
-          if (b==0) break;
-          if (!flag)
-          { if (b=='%') { Serial.print(String((short)examineAC((s2>>8)&3))); flag=true; }
-            else Serial.write(b);
-            //u8g2log.write(b);
-          }
-          else
-            flag=false;
+          byteArray[i*2]=s>>8;
+          byteArray[i*2+1]=s&255;
+          if ((s>>8)==0) break;
+          if ((s&255)==0) break;
         }
+        String str;
+        int v;
+        float f;
+        for (int i=0; i<79; i++)
+        { char b = byteArray[i];
+          char b2 = byteArray[i+1];
+          if (b==0) break;
+          if (b==1)
+          { // ignored character
+          }
+          else if (b=='\n' || b=='\r')
+          { Serial.println();
+          }
+          else if (b=='%' && b2=='f') 
+          { f = ((((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0))/65536.0;
+            st = String(f);
+            Serial.print(st); 
+            byteArray[i+1]=1;
+          } 
+          else if (b=='%' && (b2=='l' || b2=='4'))
+          { v = (((int)(short)examineAC(1))<<16)|(unsigned short)examineAC(0);
+            st = String(v);
+            Serial.print(st); 
+            byteArray[i+1]=1;
+          }
+          else if (b=='%' && (b2>='0' && b2<='3')) 
+          { v = (short)examineAC(b2&3);
+            st = String(v);
+            Serial.print(st); 
+            byteArray[i+1]=1;
+          }
+          else 
+          { Serial.write(b);
+          }
+	}
         examine(haltAddress);
         continueNova();
         continue;
@@ -3570,6 +3673,55 @@ void loop(void) {
       }
       else if (haltInstruction==GETC)
       { break; // handled in serial and keyboard code
+      }
+      else if (haltInstruction==GRMODE)
+      { int mode = examineAC(0);
+        graddress = ((mode&1)<<16)+examineAC(1);
+        grzoom = (mode&0x1e)>>1;
+        int grclear = (mode&0x20);
+        grmono = (mode&0xffc0)>>6;
+        if (grclear) 
+        { tft.fillRect(0, 0, 320, 240, ILI9341_BLACK);
+        }
+        examine(haltAddress);
+        continueNova();
+      }
+      else if (haltInstruction==GRDISPLAY)
+      { int val = examineAC(0);
+        int rep = examineAC(1);
+        if (rep==0) rep=1;
+        int addr= val;
+        for (int i=0; i<rep; i++)
+        { if (rep>1)
+          { val = examine(addr+i);
+          }
+          if (grmono)
+          { if (val>32767) val = val-65536;
+            val = val / grmono;
+            if (val<0) val=0;
+            if (val>255) val=255;
+            val = CL(val, val, val);
+          }
+          tft.fillRect(graddress%320, 0+(graddress/320), grzoom, grzoom, val);
+          graddress += grzoom;
+          if((graddress%320)<grzoom) graddress = (graddress/320 + grzoom-1) * 320;
+          if (graddress>240*320) graddress=0;
+        }
+        if (rep>1) depositAC(0, addr+rep);
+        examine(haltAddress);
+        continueNova();
+      }
+      else if (haltInstruction==GRNEXT)
+      { while(1)
+        { graddress += grzoom;
+          if((graddress%320)<grzoom) 
+          { graddress = (graddress/320 + grzoom-1) * 320;
+            break;
+          }
+        }
+        if (graddress>240*320) graddress=0;
+        examine(haltAddress);
+        continueNova();
       }
       else if (haltInstruction==HALT)
       { Serial.println("HALT at address: "+toOct(haltAddress));
