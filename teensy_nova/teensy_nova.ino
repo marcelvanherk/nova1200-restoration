@@ -106,6 +106,8 @@ Marcel van Herk, 26 January 2025   - READBLOCK/WRITEBLOCK ff00/ffff reads/writes
 Marcel van Herk, 27 January 2025   - Expand to 4 sinograms
 Marcel van Herk, 29 January 2025   - Added C version of Nova reconstruction (0.3s on pico2)
 Marcel van Herk, 18 February 2025  - Fixed rounding of C version
+Marcel van Herk, 7 October 2026    - Explictly set SDA SCL to 4 & 5 for PicoWS35
+                                   - fix that session list shows .BSHR
 
 ****************************************************/
 // on older IDE's the Teensy type define must be made manually
@@ -427,8 +429,10 @@ int encoder_button;
 #endif
 #ifndef BUTTON1
 #  define BUTTONGND1 3
-#  define BUTTONGND2 4
-#  define BUTTONGND3 5
+#  ifndef PICOWS35  // clashes with I2C on picoplus2
+#    define BUTTONGND2 4
+#    define BUTTONGND3 5
+#  endif
 #  define BUTTONGND4 19
 #  define BUTTONGND5 20
 #  define BUTTON1 16
@@ -457,13 +461,13 @@ int encoder_button;
 #ifdef SD_CS
 # include <SD.h>
 #ifndef PICOWS35
-  //Sd2Card card;
-  //SdVolume volume;
-  //SdFile root;
+  Sd2Card card;
+  SdVolume volume;
+  SdFile root;
 #else
-  SdCard card;
-  FsVolume volume;
-  FsFile root;
+  //SdCard card;
+  //FsVolume volume;
+  //FsFile root;
 #endif
   File myFile;
 #endif
@@ -2678,7 +2682,7 @@ String getSessionName(int id)
   if (id==basiccode[0]    || id==-2) return ".BASICSAMPLE";
   if (id==basicpong[0]    || id==-3) return ".BASICPONG";
   if (id==recondemo[0]    || id==-4) return ".RECONDEMO";
-  if (id==bshr_demo[0]    || id==-4) return ".BSHR";
+  if (id==bshr_demo[0]    || id==-5) return ".BSHR";
 #ifdef SD_CS
   if (hasSD)
   { myFile = SD.open("tnses1.bin");
@@ -5806,6 +5810,9 @@ delay(100);
 #ifdef PICOWS35
   tft.setRotation(0); // bottom half of screen is unused
   
+  Wire.setSCL(5);
+  Wire.setSDA(4);
+  Wire.begin();
   if (! ss.begin(SEESAW_ADDR) || ! sspixel.begin(SEESAW_ADDR)) {
     Serial.println("Couldn't find seesaw on default address");
     delay(10);
