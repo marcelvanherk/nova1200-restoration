@@ -1,4 +1,7 @@
+**/Obsolete
+**/obsolete
 *.bak
 nova1200rev3pcb/nova1200_fptest.bak
 nova1200rev3pcb/nova1200_fptest.kicad_pcb-bak
 nova1200rev3pcb/frontpanel.kicad_pcb-bak
+arduino_nova1200rev2pcb/Obsolete/2019-03-02/arduino_nova1200rev2pcbteensy.ino
