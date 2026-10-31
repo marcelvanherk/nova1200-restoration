@@ -104,6 +104,7 @@
 // mvh 20250215 Report time and Nova time between startNova and HALT
 // mvh 20250216 Also report on LCD
 // mvh 20260701 Added missing wait() to continueNova, seems to fix reconstruction hangs
+// mvh 20260810 wait is a bit longer and call one more in continueNova
 
 // TODO: mode to list serial reply in hex
 // Do I need to keep @ as cancel for direct mode? 
@@ -708,7 +709,7 @@ board 2
 */
 
 void wait(void) {
-  delayMicroseconds(2);
+  delayMicroseconds(4);
 }
 
 #ifdef TEENSY
@@ -1022,8 +1023,20 @@ void continueNova(void)
 { writeInst(0xfb);
   WriteReg(11, 6);
   wait();
+  wait();
   WriteReg(11, 0);
   wait();
+  wait();
+
+//  bool runLight = readLights()&1;
+//  if (runLight)
+//  { writeInst(0xfb);
+//    WriteReg(11, 6);
+//    wait();
+//    WriteReg(11, 0);
+//    wait();
+//  }
+  
   novaRunning=true;
 }              
 

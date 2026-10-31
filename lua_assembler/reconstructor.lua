@@ -1,6 +1,6 @@
 dofile ('c:\\software\\nova1200-restoration\\lua_assembler\\telnet_nova.lua')
 
-assemble(octal(1200), false, [[
+assemble(octal(1200), [[
 // addresses imported from nova_testprogram.lua
 ORG octal(50)
 LABEL INDMULT

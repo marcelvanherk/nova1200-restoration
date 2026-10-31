@@ -128,7 +128,7 @@ LABEL looprows
   //LDA 0 constant(0)
   //WRITELED
   
-  // display every 16th result
+  // display every 32th result
   LDA 0 variable.curproj
   LDA 1 constant(31)
   AND 0 1 SNR
